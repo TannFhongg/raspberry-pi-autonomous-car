@@ -11,6 +11,7 @@ import numpy as np
 from typing import Optional
 from datetime import datetime
 
+
 # Import PID, lane detection and Object Detector
 import sys
 from pathlib import Path
@@ -21,6 +22,9 @@ from perception.lane_detector import detect_line
 # Import get_web_camera để dùng chung camera với Web
 from perception.camera_manager import CameraManager, get_web_camera 
 from perception.object_detector import ObjectDetector
+
+from perception.imu_sensor import IMUSensor
+from perception.visual_odometry import VisualOdometry
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +53,99 @@ class RobotController:
         self.running = True
         self.watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
         self.watchdog_thread.start()
+
+        # Khởi tạo IMU
+        self.imu = IMUSensor()
+        self.imu.start()
+
+        # Khởi tạo Visual Odometry
+        self.vo = VisualOdometry()
         
         logger.info("Robot Controller initialized")
+    
+    def smart_turn(self, target_angle: float, speed: int = 220, timeout: float = 5.0):
+        """
+        Rẽ chính xác sử dụng IMU (Closed-loop control)
+        
+        Args:
+            target_angle: Góc cần rẽ (Độ). 
+                          +90 = Rẽ Trái 90 độ
+                          -90 = Rẽ Phải 90 độ
+            speed: Tốc độ động cơ khi rẽ (mặc định 220)
+            timeout: Thời gian tối đa cho phép (để tránh xe quay mãi nếu kẹt)
+        """
+        # Kiểm tra xem đã có IMU chưa
+        if not hasattr(self, 'imu') or self.imu is None:
+            logger.warning("⚠️ IMU chưa được khởi tạo! Chuyển sang rẽ theo thời gian (Fallback).")
+            # Fallback: Rẽ mù theo thời gian (ước lượng: 220 ~ 0.6s cho 90 độ)
+            duration = 0.6 * (abs(target_angle) / 90.0)
+            if target_angle > 0: self.driver.turn_left(speed)
+            else: self.driver.turn_right(speed)
+            time.sleep(duration)
+            self.driver.stop()
+            return
+
+        logger.info(f"🔄 Smart Turn START: Target {target_angle}°")
+        
+        # 1. Reset góc hiện tại về 0 để bắt đầu tính
+        self.imu.reset_yaw()
+        
+        start_time = time.time()
+        
+        while True:
+            # Lấy góc hiện tại từ IMU
+            current_yaw = self.imu.get_yaw()
+            
+            # Tính sai số (còn phải quay bao nhiêu độ nữa?)
+            # abs() để tính độ lớn, không quan tâm dấu
+            error = abs(target_angle) - abs(current_yaw)
+            
+            # --- ĐIỀU KIỆN DỪNG ---
+            
+            # A. Đã đạt mục tiêu (Sai số < 2 độ)
+            if error <= 2.0:
+                logger.info(f"✅ Target Reached! Final Yaw: {current_yaw:.1f}°")
+                break
+            
+            # B. Hết thời gian (Timeout) - Tránh treo vòng lặp
+            if time.time() - start_time > timeout:
+                logger.warning(f"⚠️ Turn Timeout! Stopped at {current_yaw:.1f}°")
+                break
+
+            # --- ĐIỀU KHIỂN TỐC ĐỘ (PID Đơn giản) ---
+            # Giảm tốc độ khi gần đến đích để dừng chính xác hơn
+            
+            if error > 30: 
+                # Còn xa > 30 độ: Chạy tốc độ cao
+                current_speed = speed
+            elif error > 10:
+                # Gần đến nơi (10-30 độ): Giảm còn 70%
+                current_speed = int(speed * 0.7)
+            else:
+                # Rất gần (< 10 độ): Giảm còn 50% (nhưng không dưới 130 để đủ lực thắng ma sát)
+                current_speed = max(130, int(speed * 0.5))
+
+            # --- GỬI LỆNH ĐỘNG CƠ ---
+            if target_angle > 0:
+                # Target dương -> Rẽ Trái (Yaw tăng)
+                # Nếu lỡ quay lố (Overshoot) -> Rẽ phải nhẹ lại (tùy chọn, ở đây ta chỉ dừng)
+                if current_yaw > target_angle: 
+                    break 
+                self.driver.turn_left(current_speed)
+            else:
+                # Target âm -> Rẽ Phải (Yaw giảm)
+                if current_yaw < target_angle: 
+                    break
+                self.driver.turn_right(current_speed)
+            
+            # Ngủ cực ngắn để không chiếm hết CPU
+            time.sleep(0.01)
+
+        # Dừng động cơ ngay lập tức
+        self.driver.stop()
+        
+        # Dừng thêm 0.2s để xe ổn định hẳn trước khi làm việc tiếp
+        time.sleep(0.2)
     
     def set_mode(self, mode: str):
         if mode in ['manual', 'auto', 'follow']:
@@ -284,15 +379,16 @@ class AutoModeController:
                             
                         elif sign_name == 'left_turn_sign':
                             # RẼ TRÁI: Tốc độ 220 (Mạnh)
-                            self.robot.driver.turn_left(220) 
-                            sign_action = "TURN"
-                            time.sleep(1.5)
+                            loger.info("Detected Left Turn Sign -> Smart Turn 90")
+                            self.robot.smart_turn(90, speed=220) 
+                            continue
+                            
                             
                         elif sign_name == 'right_turn_sign':
-                            # RẼ PHẢI: Tốc độ 220 (Mạnh)
-                            self.robot.driver.turn_right(220)
-                            sign_action = "TURN"
-                            time.sleep(1.5)
+                            logger.info("Detected Left Turn Sign -> Smart Turn 90")
+                        # Gọi hàm rẽ thông minh: 90 độ, tốc độ 220
+                            self.robot.smart_turn(-90, speed=220) 
+                            continue
                             
                         elif sign_name == 'speed_limit_signs':
                             self.base_speed = 100
