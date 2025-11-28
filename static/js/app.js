@@ -8,24 +8,24 @@ let selectedColor = 'red';
 let followDistance = 50;
 
 // Socket event handlers
-socket.on('connect', function() {
+socket.on('connect', function () {
     console.log('Connected to server');
     updateConnectionStatus(true);
 });
 
-socket.on('disconnect', function() {
+socket.on('disconnect', function () {
     console.log('Disconnected from server');
     updateConnectionStatus(false);
 });
 
 // Receive sensor data from server
-socket.on('sensor_update', function(data) {
+socket.on('sensor_update', function (data) {
     console.log('Sensor data received:', data);
     updateSensorData(data);
 });
 
 // Receive mode update from server
-socket.on('mode_update', function(data) {
+socket.on('mode_update', function (data) {
     console.log('Mode update received:', data);
     if (data.mode) {
         currentMode = data.mode;
@@ -35,13 +35,13 @@ socket.on('mode_update', function(data) {
 });
 
 // Receive target tracking data
-socket.on('target_update', function(data) {
+socket.on('target_update', function (data) {
     console.log('Target data received:', data);
     updateTargetData(data);
 });
 
 // Receive log entries from server
-socket.on('log_entry', function(data) {
+socket.on('log_entry', function (data) {
     addLogEntry(data.time, data.level, data.message);
 });
 
@@ -49,7 +49,7 @@ socket.on('log_entry', function(data) {
 function updateConnectionStatus(isConnected) {
     const badge = document.getElementById('connectionBadge');
     const text = document.getElementById('connectionText');
-    
+
     if (isConnected) {
         badge.classList.remove('offline');
         text.textContent = 'Connected';
@@ -68,7 +68,7 @@ function updateSensorData(data) {
         batteryBar.style.width = data.battery + '%';
         batteryValue.textContent = data.battery + '%';
     }
-    
+
     // Update Speed
     if (data.speed !== undefined) {
         const speedBar = document.getElementById('speedBar');
@@ -77,7 +77,7 @@ function updateSensorData(data) {
         speedBar.style.width = percentage + '%';
         speedValue.textContent = data.speed + '/255';
     }
-    
+
     // Update State
     if (data.state !== undefined) {
         const stateValue = document.getElementById('stateValue');
@@ -85,24 +85,24 @@ function updateSensorData(data) {
         stateValue.textContent = data.state;
         stateDot.style.background = getStateColor(data.state);
     }
-    
+
     // Update Line Sensors
     if (data.line_sensors !== undefined) {
         updateLineSensors(data.line_sensors);
     }
-    
+
     // Update Line Position
     if (data.line_position !== undefined) {
-        document.getElementById('linePosition').textContent = 
+        document.getElementById('linePosition').textContent =
             (data.line_position > 0 ? '+' : '') + data.line_position;
     }
-    
+
     // Update Ultrasonic Distance
     if (data.distance !== undefined) {
         const distValue = document.getElementById('ultrasonicValue');
         const distBar = document.getElementById('distanceBar');
         distValue.textContent = data.distance.toFixed(1);
-        
+
         const percentage = Math.min(100, data.distance);
         distBar.style.width = percentage + '%';
     }
@@ -114,7 +114,7 @@ function updateTargetData(data) {
     const targetDistanceItem = document.getElementById('targetDistanceItem');
     const trackingStatusItem = document.getElementById('trackingStatusItem');
     const confidenceItem = document.getElementById('confidenceItem');
-    
+
     if (currentMode === 'follow') {
         targetDistanceItem.style.display = 'flex';
         trackingStatusItem.style.display = 'flex';
@@ -125,12 +125,12 @@ function updateTargetData(data) {
         confidenceItem.style.display = 'none';
         return;
     }
-    
+
     // Update tracking status
     const trackingStatusValue = document.getElementById('trackingStatusValue');
     const trackingBadge = trackingStatusValue.querySelector('.tracking-badge');
     const targetStatusBadge = document.getElementById('targetStatusBadge');
-    
+
     if (data.tracking) {
         trackingBadge.textContent = 'Tracking';
         trackingBadge.className = 'tracking-badge tracking-active';
@@ -142,7 +142,7 @@ function updateTargetData(data) {
         targetStatusBadge.textContent = 'Lost';
         targetStatusBadge.className = 'tracking-badge tracking-lost';
     }
-    
+
     // Update target distance
     if (data.target_distance !== undefined) {
         const targetDistanceValue = document.getElementById('targetDistanceValue');
@@ -150,29 +150,29 @@ function updateTargetData(data) {
         targetDistanceValue.textContent = data.target_distance.toFixed(1) + ' cm';
         targetDistanceInfo.textContent = data.target_distance.toFixed(1) + ' cm';
     }
-    
+
     // Update confidence
     if (data.confidence !== undefined) {
         const confidenceBar = document.getElementById('confidenceBar');
         const confidenceValue = document.getElementById('confidenceValue');
         const targetConfidenceInfo = document.getElementById('targetConfidenceInfo');
-        
+
         confidenceBar.style.width = data.confidence + '%';
         confidenceValue.textContent = data.confidence + '%';
         targetConfidenceInfo.textContent = data.confidence + '%';
     }
-    
+
     // Update target position
     if (data.target_x !== undefined && data.target_y !== undefined) {
         document.getElementById('targetX').textContent = data.target_x;
         document.getElementById('targetY').textContent = data.target_y;
-        
+
         // Update target box overlay
         updateTargetOverlay(data.target_x, data.target_y, data.target_w, data.target_h, data.tracking);
     }
-    
+
     // Update target color info
-    document.getElementById('targetColorInfo').textContent = 
+    document.getElementById('targetColorInfo').textContent =
         selectedColor.charAt(0).toUpperCase() + selectedColor.slice(1);
 }
 
@@ -180,15 +180,15 @@ function updateTargetData(data) {
 function updateTargetOverlay(x, y, w, h, tracking) {
     const overlay = document.getElementById('targetOverlay');
     const targetBox = document.getElementById('targetBox');
-    
+
     if (tracking && x !== undefined && y !== undefined) {
         overlay.style.display = 'block';
-        
+
         // Convert normalized coordinates to pixels (assuming video frame size)
         // Adjust these values based on your actual video dimensions
         const videoWidth = 320;
         const videoHeight = 240;
-        
+
         targetBox.style.left = (x * videoWidth) + 'px';
         targetBox.style.top = (y * videoHeight) + 'px';
         targetBox.style.width = (w * videoWidth) + 'px';
@@ -236,11 +236,11 @@ function sendCommand(command) {
     // Check mode before sending command
     if (currentMode !== 'manual') {
         console.log('Cannot send command in ' + currentMode + ' mode');
-        addLogEntry(new Date().toLocaleTimeString(), 'WARNING', 
+        addLogEntry(new Date().toLocaleTimeString(), 'WARNING',
             'Manual control disabled in ' + currentMode.toUpperCase() + ' mode');
         return;
     }
-    
+
     fetch('/' + command)
         .then(response => {
             if (!response.ok) {
@@ -256,7 +256,7 @@ function sendCommand(command) {
         })
         .catch(error => {
             console.error('Error sending command:', error);
-            addLogEntry(new Date().toLocaleTimeString(), 'ERROR', 
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
                 'Failed to send command: ' + command);
         });
 }
@@ -268,7 +268,7 @@ function emergencyStop() {
             .then(response => response.json())
             .then(data => {
                 console.log('Emergency stop executed:', data);
-                addLogEntry(new Date().toLocaleTimeString(), 'WARNING', 
+                addLogEntry(new Date().toLocaleTimeString(), 'WARNING',
                     'EMERGENCY STOP executed');
             })
             .catch(error => {
@@ -282,7 +282,7 @@ function toggleMode() {
     const modeManual = document.getElementById('modeManual');
     const modeAuto = document.getElementById('modeAuto');
     const modeFollow = document.getElementById('modeFollow');
-    
+
     if (modeManual.checked) {
         currentMode = 'manual';
     } else if (modeAuto.checked) {
@@ -290,19 +290,19 @@ function toggleMode() {
     } else if (modeFollow.checked) {
         currentMode = 'follow';
     }
-    
+
     // Send request to server
     fetch('/set_mode?mode=' + currentMode)
         .then(response => response.json())
         .then(data => {
             console.log('Mode changed to:', currentMode, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Mode changed to: ' + currentMode.toUpperCase());
             updateControlsState();
         })
         .catch(error => {
             console.error('Error changing mode:', error);
-            addLogEntry(new Date().toLocaleTimeString(), 'ERROR', 
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
                 'Failed to change mode');
         });
 }
@@ -312,7 +312,7 @@ function updateModeRadioButtons() {
     const modeManual = document.getElementById('modeManual');
     const modeAuto = document.getElementById('modeAuto');
     const modeFollow = document.getElementById('modeFollow');
-    
+
     modeManual.checked = (currentMode === 'manual');
     modeAuto.checked = (currentMode === 'auto');
     modeFollow.checked = (currentMode === 'follow');
@@ -323,18 +323,18 @@ function updateControlsState() {
     const controlPad = document.getElementById('controlPad');
     const buttons = controlPad.querySelectorAll('.ctrl-btn');
     const followSettings = document.getElementById('followSettings');
-    
+
     // Disable manual control buttons if not in manual mode
     buttons.forEach(btn => {
         btn.disabled = (currentMode !== 'manual');
     });
-    
+
     if (currentMode !== 'manual') {
         controlPad.style.opacity = '0.4';
     } else {
         controlPad.style.opacity = '1';
     }
-    
+
     // Show/hide follow settings
     if (currentMode === 'follow') {
         followSettings.style.display = 'flex';
@@ -346,7 +346,7 @@ function updateControlsState() {
 // ===== COLOR SELECTION (NEW) =====
 function selectColor(color) {
     selectedColor = color;
-    
+
     // Update UI
     const colorButtons = document.querySelectorAll('.color-btn');
     colorButtons.forEach(btn => {
@@ -356,21 +356,21 @@ function selectColor(color) {
             btn.classList.remove('active');
         }
     });
-    
+
     // Send to server
     fetch('/set_follow_color?color=' + color)
         .then(response => response.json())
         .then(data => {
             console.log('Target color set to:', color, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Target color changed to: ' + color.toUpperCase());
-            
+
             // Update target color info
-            document.getElementById('targetColorInfo').textContent = 
+            document.getElementById('targetColorInfo').textContent =
                 color.charAt(0).toUpperCase() + color.slice(1);
-            
+
             // Update target label
-            document.getElementById('targetLabel').textContent = 
+            document.getElementById('targetLabel').textContent =
                 'Target: ' + color.charAt(0).toUpperCase() + color.slice(1);
         })
         .catch(error => {
@@ -382,17 +382,17 @@ function selectColor(color) {
 const speedSlider = document.getElementById('speedSlider');
 const speedDisplay = document.getElementById('speedDisplay');
 
-speedSlider.addEventListener('input', function() {
+speedSlider.addEventListener('input', function () {
     speedDisplay.textContent = this.value;
 });
 
-speedSlider.addEventListener('change', function() {
+speedSlider.addEventListener('change', function () {
     const speed = this.value;
     fetch('/set_speed?value=' + speed)
         .then(response => response.json())
         .then(data => {
             console.log('Speed set to:', speed, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Speed adjusted to: ' + speed);
         })
         .catch(error => {
@@ -404,17 +404,17 @@ speedSlider.addEventListener('change', function() {
 const followDistanceSlider = document.getElementById('followDistanceSlider');
 const followDistanceDisplay = document.getElementById('followDistanceDisplay');
 
-followDistanceSlider.addEventListener('input', function() {
+followDistanceSlider.addEventListener('input', function () {
     followDistanceDisplay.textContent = this.value + ' cm';
 });
 
-followDistanceSlider.addEventListener('change', function() {
+followDistanceSlider.addEventListener('change', function () {
     followDistance = parseInt(this.value);
     fetch('/set_follow_distance?distance=' + followDistance)
         .then(response => response.json())
         .then(data => {
             console.log('Follow distance set to:', followDistance, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Follow distance set to: ' + followDistance + ' cm');
         })
         .catch(error => {
@@ -423,13 +423,13 @@ followDistanceSlider.addEventListener('change', function() {
 });
 
 // ===== KEYBOARD CONTROL =====
-document.addEventListener('keydown', function(event) {
+document.addEventListener('keydown', function (event) {
     // Only allow keyboard control in manual mode
     if (currentMode !== 'manual') {
         return;
     }
-    
-    switch(event.key) {
+
+    switch (event.key) {
         case 'ArrowUp':
         case 'w':
         case 'W':
@@ -461,10 +461,33 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
+// ===== XỬ LÝ THẢ PHÍM (Dừng xe khi thả tay) =====
+document.addEventListener('keyup', function (event) {
+    // Chỉ xử lý khi đang ở chế độ Manual
+    if (currentMode !== 'manual') {
+        return;
+    }
+
+    // Danh sách các phím di chuyển cần theo dõi
+    const moveKeys = [
+        'ArrowUp', 'w', 'W',
+        'ArrowDown', 's', 'S',
+        'ArrowLeft', 'a', 'A',
+        'ArrowRight', 'd', 'D'
+    ];
+
+    // Nếu phím vừa thả ra nằm trong danh sách trên -> Gửi lệnh STOP
+    if (moveKeys.includes(event.key)) {
+        console.log("Thả phím: " + event.key + " -> Gửi lệnh STOP");
+        sendCommand('stop');
+        event.preventDefault();
+    }
+});
+
 // ===== LOG MANAGEMENT =====
 function addLogEntry(time, level, message) {
     const logContent = document.getElementById('logContent');
-    
+
     const entry = document.createElement('div');
     entry.className = 'log-entry log-' + level.toLowerCase();
     entry.innerHTML = `
@@ -472,10 +495,10 @@ function addLogEntry(time, level, message) {
         <span class="log-level">${level}</span>
         <span class="log-message">${message}</span>
     `;
-    
+
     // Add to top of log
     logContent.insertBefore(entry, logContent.firstChild);
-    
+
     // Keep max 50 entries
     while (logContent.children.length > 50) {
         logContent.removeChild(logContent.lastChild);
@@ -489,7 +512,7 @@ function clearLog() {
             .then(data => {
                 console.log('Log cleared:', data);
                 document.getElementById('logContent').innerHTML = '';
-                addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+                addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                     'Log cleared by user');
             })
             .catch(error => {
@@ -503,8 +526,8 @@ function updateUptime() {
     const elapsed = Date.now() - startTime;
     const hours = Math.floor(elapsed / 3600000);
     const minutes = Math.floor((elapsed % 3600000) / 60000);
-    
-    document.getElementById('uptimeValue').textContent = 
+
+    document.getElementById('uptimeValue').textContent =
         hours + 'h ' + minutes + 'm';
 }
 
@@ -512,19 +535,19 @@ function updateUptime() {
 setInterval(updateUptime, 60000);
 
 // ===== VIDEO STREAM ERROR HANDLING =====
-document.getElementById('videoStream').addEventListener('error', function() {
+document.getElementById('videoStream').addEventListener('error', function () {
     console.error('Error loading video stream');
-    addLogEntry(new Date().toLocaleTimeString(), 'ERROR', 
+    addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
         'Video stream connection lost');
 });
 
 // ===== INITIALIZATION =====
-window.addEventListener('load', function() {
+window.addEventListener('load', function () {
     console.log('Dashboard initialized');
     updateUptime();
     updateControlsState();
-    
+
     // Initial log entry
-    addLogEntry(new Date().toLocaleTimeString(), 'INFO', 
+    addLogEntry(new Date().toLocaleTimeString(), 'INFO',
         'LogisticsBot Control Panel initialized');
 });

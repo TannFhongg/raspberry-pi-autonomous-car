@@ -206,8 +206,8 @@ class ArduinoDriver:
         
         command = {
             'cmd': 'MOVE',
-            'left': left_speed,
-            'right': right_speed
+            'left': right_speed,
+            'right': left_speed
         }
         
         self.send_command(command, wait_response=False)

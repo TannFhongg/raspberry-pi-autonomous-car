@@ -194,10 +194,11 @@ class AutoModeController:
         self.min_speed = lane_config.get('min_speed', 60)
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
-        # --- CẤU HÌNH KHOẢNG CÁCH BIỂN BÁO (THEO YÊU CẦU: 140px - 170px) ---
+        # --- CẤU HÌNH KHOẢNG CÁCH BIỂN BÁO (140px - 170px) ---
         self.DIST_PREPARE = 140  # < 140px: Chưa làm gì
         self.DIST_EXECUTE = 170  # 140px - 170px: Vùng hành động
         
+        # State
         self.lane_lost_count = 0
         self.lane_lost_threshold = 10
         self.latest_debug_frame = None
@@ -209,9 +210,11 @@ class AutoModeController:
     def start(self):
         if not self.running:
             if not self._init_shared_camera(): return False
+            
             self.pid.reset()
             self.lane_lost_count = 0
             self.base_speed = self.default_speed
+            
             self.running = True
             self.thread = threading.Thread(target=self._auto_loop, daemon=True)
             self.thread.start()
@@ -230,9 +233,7 @@ class AutoModeController:
         try:
             self.camera = get_web_camera(self.robot.config)
             if not self.camera.is_running():
-                if not self.camera.start():
-                    logger.error("Failed to start camera")
-                    return False
+                if not self.camera.start(): return False
             return True
         except Exception as e:
             logger.error(f"Camera init error: {e}")
@@ -240,7 +241,6 @@ class AutoModeController:
     
     def _auto_loop(self):
         logger.info("Auto loop started")
-        prev_time = time.time()
         
         while self.running:
             try:
@@ -252,27 +252,25 @@ class AutoModeController:
                     continue
                 
                 detections, debug_frame = self.detector.detect(frame)
-                
                 sign_action = None
+                
                 if detections:
                     sign = max(detections, key=lambda x: x['w'] * x['h'])
                     sign_name = sign['class_name']
-                    sign_size = max(sign['w'], sign['h']) # Lấy cạnh lớn nhất
+                    sign_size = max(sign['w'], sign['h'])
                     
                     self.robot.current_state = f"SIGN: {sign_name} ({sign_size:.0f}px)"
                     
                     # --- LOGIC KHOẢNG CÁCH ---
                     
-                    # 1. Quá xa (< 140px): Chỉ chuẩn bị
                     if sign_size < self.DIST_PREPARE:
-                        pass
+                        pass # Chưa làm gì
                     
-                    # 2. Quá gần (> 190px): Đã đi qua -> Bỏ qua
                     elif sign_size > self.DIST_EXECUTE + 20:
-                        pass
+                        pass # Đã đi qua
                     
-                    # 3. VÙNG HÀNH ĐỘNG (140px - 170px)
                     else:
+                        # VÙNG HÀNH ĐỘNG (140px - 170px)
                         logger.info(f"EXECUTING ACTION FOR: {sign_name} (Size: {sign_size:.0f})")
                         
                         if sign_name in ['stop_sign', 'red_light']:
@@ -285,12 +283,14 @@ class AutoModeController:
                             pass
                             
                         elif sign_name == 'left_turn_sign':
-                            self.robot.driver.turn_left(150)
+                            # RẼ TRÁI: Tốc độ 220 (Mạnh)
+                            self.robot.driver.turn_left(220) 
                             sign_action = "TURN"
                             time.sleep(1.5)
                             
                         elif sign_name == 'right_turn_sign':
-                            self.robot.driver.turn_right(150)
+                            # RẼ PHẢI: Tốc độ 220 (Mạnh)
+                            self.robot.driver.turn_right(220)
                             sign_action = "TURN"
                             time.sleep(1.5)
                             
@@ -310,9 +310,10 @@ class AutoModeController:
                 self.latest_debug_frame = lane_debug_frame 
                 self.latest_error = error
                 
+                # Tính PID & Điều khiển
+                # ... (Đoạn này giữ nguyên như logic chuẩn)
                 current_time = time.time()
-                dt = current_time - prev_time
-                prev_time = current_time
+                dt = 0.05 # Ước lượng dt
                 
                 if abs(error) > frame.shape[1] * 0.4:
                     self.lane_lost_count += 1
@@ -327,11 +328,8 @@ class AutoModeController:
                 correction = self.pid.compute(error, dt)
                 self.latest_correction = correction
                 
-                left_speed = self.base_speed - correction
-                right_speed = self.base_speed + correction
-                
-                left_speed = max(self.min_speed, min(self.max_speed, int(left_speed)))
-                right_speed = max(self.min_speed, min(self.max_speed, int(right_speed)))
+                left_speed = max(-255, min(255, int(self.base_speed - correction)))
+                right_speed = max(-255, min(255, int(self.base_speed + correction)))
                 
                 self.robot.driver.set_motors(left_speed, right_speed)
                 time.sleep(0.03)
