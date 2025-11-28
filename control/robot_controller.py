@@ -359,8 +359,6 @@ class FollowModeController:
         self.robot = robot_controller
         self.running = False
         self.thread: Optional[threading.Thread] = None
-        
-        # Camera - Sử dụng Singleton Instance
         self.camera: Optional[CameraManager] = None
         
         # AI Detector
@@ -373,13 +371,17 @@ class FollowModeController:
             'yellow': 'yellow_color'
         }
         self.target_color_name = 'red'
-        self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=150)
+        self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
         
-        # --- CẤU HÌNH KHOẢNG CÁCH FOLLOW (Vật 6cm x 6cm) ---
-        # Dựa trên calibration của bạn: 140px - 170px tương ứng 40-60cm
-        self.SIZE_FORWARD = 150   # < 140px (Xa > 60cm) -> TIẾN
-        self.SIZE_STOP    = 160   # > 170px (Gần < 40cm) -> DỪNG
-        self.SIZE_BACK    = 170   # > 200px (Quá gần < 30cm) -> LÙI
+        # --- CẤU HÌNH CAMERA (Calibration) ---
+        self.FOCAL_LENGTH = 542  # Tiêu cự (đã tính ở bài trước)
+        self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
+        
+        # Khởi tạo các ngưỡng khoảng cách mặc định (50cm)
+        self.SIZE_FORWARD = 0
+        self.SIZE_STOP = 0
+        self.SIZE_BACK = 0
+        self.set_follow_distance(50) # Cài đặt mặc định ban đầu
         
         # Web Info
         self.target_x = 0
@@ -409,12 +411,36 @@ class FollowModeController:
     
     def set_target_color(self, color: str):
         self.target_color_name = color
-        logger.info(f"Target color changed to: {color} (Class: {self.color_map.get(color)})")
+        logger.info(f"Target color changed to: {color}")
     
     def set_follow_distance(self, distance: int):
-        pass 
+        """
+        Cập nhật khoảng cách bám theo từ Web Dashboard
+        Input: distance (cm)
+        Output: Cập nhật các ngưỡng Pixel (SIZE_STOP...)
+        """
+        if distance < 10: distance = 10 # Giới hạn tối thiểu 10cm
+        
+        # Tính kích thước Pixel mục tiêu tại khoảng cách đó
+        # Công thức: Pixel = (Focal * Real_Size) / Distance
+        target_pixel_size = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / distance
+        
+        # Thiết lập các vùng hành động xung quanh kích thước mục tiêu
+        # Ví dụ: Nếu muốn dừng ở 100px -> Tiến khi < 90, Lùi khi > 110
+        margin = 10 # Khoảng đệm
+        
+        self.SIZE_STOP = int(target_pixel_size)      # Điểm dừng chuẩn
+        self.SIZE_FORWARD = int(target_pixel_size - margin) # Xa hơn -> Tiến
+        self.SIZE_BACK = int(target_pixel_size + margin)    # Gần hơn -> Lùi
+        
+        logger.info(f"Set Follow Distance: {distance}cm -> Stop Size: {self.SIZE_STOP}px")
     
     def get_target_data(self) -> dict:
+        # Tính ngược lại khoảng cách hiện tại để hiển thị lên Web
+        current_dist = 0
+        if self.target_w > 0:
+            current_dist = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / self.target_w
+            
         return {
             'tracking': self.confidence > 0,
             'target_color': self.target_color_name,
@@ -423,7 +449,7 @@ class FollowModeController:
             'target_w': self.target_w,
             'target_h': self.target_h,
             'confidence': self.confidence,
-            'target_distance': self.target_distance
+            'target_distance': current_dist # Gửi khoảng cách thật về Web
         }
     
     def _init_shared_camera(self) -> bool:
@@ -453,42 +479,32 @@ class FollowModeController:
                 valid_objs = [d for d in detections if d['class_name'] == target_class]
                 
                 if valid_objs:
-                    # Chọn vật to nhất (gần nhất)
                     target = max(valid_objs, key=lambda x: x['w'] * x['h'])
                     
-                    # 1. PID Rẽ (Steering)
+                    # PID Rẽ
                     center_x = frame.shape[1] / 2
                     error_x = center_x - target['x']
                     turn_output = self.pid_turn.compute(error_x)
                     
-                    # 2. Điều khiển Tốc độ (Distance)
-                    # Lấy kích thước lớn nhất (cạnh 6cm) để so sánh chính xác
+                    # Điều khiển Tốc độ (Dựa trên các ngưỡng đã tính động)
+                    # Lấy cạnh lớn nhất để ổn định (vì hình vuông 6x6)
                     obj_size = max(target['w'], target['h'])
                     
                     if obj_size < self.SIZE_FORWARD:
-                        # Vật nhỏ (< 140px) -> Xa -> Tiến nhanh
-                        forward_speed = 180 
-                        
+                        forward_speed = 220 # Xa -> Tiến nhanh
                     elif obj_size > self.SIZE_BACK:
-                        # Vật quá to (> 200px) -> Quá gần -> Lùi lại
-                        forward_speed = -120
-                        
+                        forward_speed = -150 # Quá gần -> Lùi
                     elif obj_size > self.SIZE_STOP:
-                        # Vật hơi to (> 170px) -> Hơi gần -> Dừng
-                        forward_speed = 0
-                        
+                         forward_speed = 0 # Hơi gần -> Dừng
                     else:
-                        # Ở giữa 140-170px -> Khoảng cách vàng -> Dừng/Giữ vị trí
-                        forward_speed = 0
+                        forward_speed = 0 # Đúng tầm -> Dừng
                     
-                    # Trộn tín hiệu (Clamp -255 đến 255)
                     left_speed = max(-255, min(255, int(forward_speed + turn_output)))
                     right_speed = max(-255, min(255, int(forward_speed - turn_output)))
                     
                     self.robot.driver.set_motors(left_speed, right_speed)
                     self.robot.current_state = f"TRACKING {target['class_name']} ({obj_size:.0f}px)"
                     
-                    # Update Web
                     self.target_x = int(target['x'])
                     self.target_y = int(target['y'])
                     self.target_w = int(target['w'])
@@ -499,6 +515,7 @@ class FollowModeController:
                     self.robot.driver.stop()
                     self.robot.current_state = "SEARCHING..."
                     self.confidence = 0
+                    self.target_w = 0 # Reset width để tính distance = 0
                 
                 time.sleep(0.05)
                 
