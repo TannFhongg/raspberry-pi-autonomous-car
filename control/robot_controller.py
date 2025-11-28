@@ -545,3 +545,181 @@ class AutoModeController:
             'correction': self.latest_correction,
             **self.pid.get_components()
         }
+    
+class FollowModeController:
+    """
+    Follow mode controller
+    Uses YOLOv11 to track specific colored objects (6cm x 6cm targets)
+    """
+    
+    def __init__(self, robot_controller: RobotController):
+        self.robot = robot_controller
+        self.running = False
+        self.thread: Optional[threading.Thread] = None
+        self.camera: Optional[CameraManager] = None
+        
+        # AI Detector
+        self.detector = ObjectDetector(model_path='data/models/best_ncnn_model', conf_threshold=0.5)
+        
+        self.color_map = {
+            'red': 'red_color',
+            'green': 'green_color',
+            'blue': 'blue_color',
+            'yellow': 'yellow_color'
+        }
+        self.target_color_name = 'red'
+        self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
+        
+        # --- CẤU HÌNH CAMERA (Calibration) ---
+        self.FOCAL_LENGTH = 542  # Tiêu cự (đã tính ở bài trước)
+        self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
+        
+        # Khởi tạo các ngưỡng khoảng cách mặc định (50cm)
+        self.SIZE_FORWARD = 0
+        self.SIZE_STOP = 0
+        self.SIZE_BACK = 0
+        self.set_follow_distance(50) # Cài đặt mặc định ban đầu
+        
+        # Web Info
+        self.target_x = 0
+        self.target_y = 0
+        self.target_w = 0
+        self.target_h = 0
+        self.confidence = 0
+        self.target_distance = 0
+        
+        logger.info("Follow Mode Controller initialized with YOLO")
+    
+    def start(self):
+        if not self.running:
+            if not self._init_shared_camera(): return False
+            self.running = True
+            self.thread = threading.Thread(target=self._follow_loop, daemon=True)
+            self.thread.start()
+            logger.info(f"Follow mode started: {self.target_color_name}")
+            return True
+        return False
+    
+    def stop(self):
+        self.running = False
+        if self.thread: self.thread.join(timeout=2.0)
+        self.robot.driver.stop()
+        logger.info("Follow mode stopped")
+    
+    def set_target_color(self, color: str):
+        self.target_color_name = color
+        logger.info(f"Target color changed to: {color}")
+    
+    def set_follow_distance(self, distance: int):
+        """
+        Cập nhật khoảng cách bám theo từ Web Dashboard
+        Input: distance (cm)
+        Output: Cập nhật các ngưỡng Pixel (SIZE_STOP...)
+        """
+        if distance < 10: distance = 10 # Giới hạn tối thiểu 10cm
+        
+        # Tính kích thước Pixel mục tiêu tại khoảng cách đó
+        # Công thức: Pixel = (Focal * Real_Size) / Distance
+        target_pixel_size = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / distance
+        
+        # Thiết lập các vùng hành động xung quanh kích thước mục tiêu
+        # Ví dụ: Nếu muốn dừng ở 100px -> Tiến khi < 90, Lùi khi > 110
+        margin = 10 # Khoảng đệm
+        
+        self.SIZE_STOP = int(target_pixel_size)      # Điểm dừng chuẩn
+        self.SIZE_FORWARD = int(target_pixel_size - margin) # Xa hơn -> Tiến
+        self.SIZE_BACK = int(target_pixel_size + margin)    # Gần hơn -> Lùi
+        
+        logger.info(f"Set Follow Distance: {distance}cm -> Stop Size: {self.SIZE_STOP}px")
+    
+    def get_target_data(self) -> dict:
+        # Tính ngược lại khoảng cách hiện tại để hiển thị lên Web
+        current_dist = 0
+        if self.target_w > 0:
+            current_dist = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / self.target_w
+            
+        return {
+            'tracking': self.confidence > 0,
+            'target_color': self.target_color_name,
+            'target_x': self.target_x,
+            'target_y': self.target_y,
+            'target_w': self.target_w,
+            'target_h': self.target_h,
+            'confidence': self.confidence,
+            'target_distance': current_dist # Gửi khoảng cách thật về Web
+        }
+    
+    def _init_shared_camera(self) -> bool:
+        try:
+            self.camera = get_web_camera(self.robot.config)
+            if not self.camera.is_running():
+                if not self.camera.start(): return False
+            return True
+        except Exception as e:
+            logger.error(f"Camera init error: {e}")
+            return False
+
+    def _follow_loop(self):
+        logger.info(f"Follow loop started. Tracking: {self.color_map.get(self.target_color_name)}")
+        
+        while self.running:
+            try:
+                if self.robot.current_mode != 'follow': break
+                
+                frame = self.camera.capture_frame()
+                if frame is None:
+                    time.sleep(0.1)
+                    continue
+                
+                detections, _ = self.detector.detect(frame)
+                target_class = self.color_map.get(self.target_color_name)
+                valid_objs = [d for d in detections if d['class_name'] == target_class]
+                
+                if valid_objs:
+                    target = max(valid_objs, key=lambda x: x['w'] * x['h'])
+                    
+                    # PID Rẽ
+                    center_x = frame.shape[1] / 2
+                    error_x = center_x - target['x']
+                    turn_output = self.pid_turn.compute(error_x)
+                    
+                    # Điều khiển Tốc độ (Dựa trên các ngưỡng đã tính động)
+                    # Lấy cạnh lớn nhất để ổn định (vì hình vuông 6x6)
+                    obj_size = max(target['w'], target['h'])
+                    
+                    if obj_size < self.SIZE_FORWARD:
+                        forward_speed = 220 # Xa -> Tiến nhanh
+                    elif obj_size > self.SIZE_BACK:
+                        forward_speed = -150 # Quá gần -> Lùi
+                    elif obj_size > self.SIZE_STOP:
+                         forward_speed = 0 # Hơi gần -> Dừng
+                    else:
+                        forward_speed = 0 # Đúng tầm -> Dừng
+                    
+                    left_speed = max(-255, min(255, int(forward_speed + turn_output)))
+                    right_speed = max(-255, min(255, int(forward_speed - turn_output)))
+                    
+                    self.robot.driver.set_motors(left_speed, right_speed)
+                    self.robot.current_state = f"TRACKING {target['class_name']} ({obj_size:.0f}px)"
+                    
+                    self.target_x = int(target['x'])
+                    self.target_y = int(target['y'])
+                    self.target_w = int(target['w'])
+                    self.target_h = int(target['h'])
+                    self.confidence = int(target['conf'] * 100)
+                    
+                else:
+                    self.robot.driver.stop()
+                    self.robot.current_state = "SEARCHING..."
+                    self.confidence = 0
+                    self.target_w = 0 # Reset width để tính distance = 0
+                
+                time.sleep(0.05)
+                
+            except Exception as e:
+                logger.error(f"Follow loop error: {e}")
+                self.robot.driver.stop()
+                break
+        
+        self.robot.driver.stop()
+        logger.info("Follow loop ended")
