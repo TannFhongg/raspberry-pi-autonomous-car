@@ -551,3 +551,120 @@ window.addEventListener('load', function () {
     addLogEntry(new Date().toLocaleTimeString(), 'INFO',
         'LogisticsBot Control Panel initialized');
 });
+
+// ===== VISUAL ODOMETRY UI UPDATES =====
+
+// Update odometry status periodically
+setInterval(updateOdometryStatus, 1000);
+
+async function updateOdometryStatus() {
+    try {
+        const response = await fetch('/api/odometry/status');
+        
+        if (!response.ok) {
+            // VO not available
+            document.getElementById('vo-distance').textContent = 'N/A';
+            document.getElementById('vo-velocity').textContent = 'N/A';
+            document.getElementById('vo-quality').textContent = 'N/A';
+            return;
+        }
+        
+        const data = await response.json();
+        
+        if (data.enabled) {
+            // Update distance
+            document.getElementById('vo-distance').textContent = 
+                data.distance_cm.toFixed(1) + ' cm';
+            
+            // Update velocity
+            const velocity = Math.sqrt(
+                Math.pow(data.velocity.x_cm_s, 2) + 
+                Math.pow(data.velocity.y_cm_s, 2)
+            );
+            document.getElementById('vo-velocity').textContent = 
+                velocity.toFixed(1) + ' cm/s';
+            
+            // Update quality (color-coded)
+            const qualityBadge = document.getElementById('vo-quality');
+            const quality = data.quality;
+            qualityBadge.textContent = quality.toFixed(2);
+            
+            if (quality > 0.7) {
+                qualityBadge.className = 'badge badge-success';
+            } else if (quality > 0.4) {
+                qualityBadge.className = 'badge badge-warning';
+            } else {
+                qualityBadge.className = 'badge badge-danger';
+            }
+            
+            // Update position
+            document.getElementById('vo-pos-x').textContent = 
+                data.position.x_cm.toFixed(1);
+            document.getElementById('vo-pos-y').textContent = 
+                data.position.y_cm.toFixed(1);
+        }
+    } catch (error) {
+        console.error('Error updating odometry:', error);
+    }
+}
+
+// Reset odometry
+async function resetOdometry() {
+    if (!confirm('Reset odometry position to (0, 0)?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/odometry/reset', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert('✅ Odometry reset successfully!');
+            updateOdometryStatus(); // Update UI immediately
+        } else {
+            alert('❌ Failed to reset: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error resetting odometry:', error);
+        alert('❌ Network error');
+    }
+}
+
+// Calibration UI (Optional - Advanced)
+function showCalibrationDialog() {
+    const distance = prompt('Enter distance traveled (cm):', '20');
+    const pixels = prompt('Enter measured pixels:', '400');
+    
+    if (distance && pixels) {
+        calibrateOdometry(parseFloat(distance), parseFloat(pixels));
+    }
+}
+
+async function calibrateOdometry(distance_cm, measured_pixels) {
+    try {
+        const response = await fetch('/api/odometry/calibrate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                distance_cm: distance_cm,
+                measured_pixels: measured_pixels
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            alert(`✅ Calibration successful!\n${data.message}`);
+        } else {
+            alert('❌ Calibration failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error calibrating:', error);
+        alert('❌ Network error');
+    }
+}

@@ -108,6 +108,64 @@
                                 <span class="tracking-badge tracking-lost">Lost Target</span>
                             </div>
                         </div>
+                        
+
+                        <!-- Visual Odometry Status Card -->
+<div class="col-md-6">
+    <div class="card">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0">📍 Visual Odometry</h5>
+        </div>
+        <div class="card-body">
+            <div id="vo-status">
+                <div class="row mb-2">
+                    <div class="col-6">
+                        <strong>Distance:</strong>
+                    </div>
+                    <div class="col-6">
+                        <span id="vo-distance" class="badge badge-primary">0.0 cm</span>
+                    </div>
+                </div>
+                
+                <div class="row mb-2">
+                    <div class="col-6">
+                        <strong>Velocity:</strong>
+                    </div>
+                    <div class="col-6">
+                        <span id="vo-velocity" class="badge badge-info">0.0 cm/s</span>
+                    </div>
+                </div>
+                
+                <div class="row mb-2">
+                    <div class="col-6">
+                        <strong>Quality:</strong>
+                    </div>
+                    <div class="col-6">
+                        <span id="vo-quality" class="badge badge-success">N/A</span>
+                    </div>
+                </div>
+                
+                <div class="row mb-2">
+                    <div class="col-6">
+                        <strong>Position:</strong>
+                    </div>
+                    <div class="col-6">
+                        <small>X: <span id="vo-pos-x">0.0</span> cm</small><br>
+                        <small>Y: <span id="vo-pos-y">0.0</span> cm</small>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-12">
+                        <button class="btn btn-sm btn-warning btn-block" onclick="resetOdometry()">
+                            🔄 Reset Position
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
                         <!-- NEW: Detection Confidence -->
                         <div class="status-item" id="confidenceItem" style="display: none;">

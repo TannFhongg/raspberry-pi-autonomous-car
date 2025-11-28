@@ -398,6 +398,97 @@ def clear_log():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+
+# ===== VISUAL ODOMETRY ENDPOINTS =====
+
+@app.route('/api/odometry/status', methods=['GET'])
+def get_odometry_status():
+    """
+    Get current odometry status
+    Returns: distance, velocity, position, quality
+    """
+    try:
+        if not hasattr(robot_controller, 'vo') or robot_controller.vo is None:
+            return jsonify({
+                'error': 'Visual Odometry not initialized',
+                'enabled': False
+            }), 404
+        
+        status = robot_controller.vo.get_status()
+        
+        return jsonify({
+            'enabled': True,
+            'distance_cm': status['position_y_cm'],
+            'position': {
+                'x_cm': status['position_x_cm'],
+                'y_cm': status['position_y_cm']
+            },
+            'velocity': {
+                'x_cm_s': robot_controller.vo.get_velocity()[0],
+                'y_cm_s': robot_controller.vo.get_velocity()[1]
+            },
+            'quality': status['tracking_quality'],
+            'is_tracking_good': status['is_tracking_good'],
+            'num_features': status['num_features'],
+            'scale_factor': status['scale_factor']
+        })
+    
+    except Exception as e:
+        logger.error(f"Error getting odometry status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ===== VISUAL ODOMETRY ENDPOINTS =====
+@app.route('/api/odometry/reset', methods=['POST'])
+def reset_odometry():
+    """
+    Reset odometry (position back to 0)
+    """
+    try:
+        if hasattr(robot_controller, 'reset_odometry'):
+            robot_controller.reset_odometry()
+            return jsonify({
+                'status': 'success',
+                'message': 'Odometry reset'
+            })
+        else:
+            return jsonify({
+                'error': 'Reset method not available'
+            }), 404
+    
+    except Exception as e:
+        logger.error(f"Error resetting odometry: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/odometry/calibrate', methods=['POST'])
+def calibrate_odometry():
+    """
+    Calibrate odometry scale factor
+    Request body: {"distance_cm": 20, "measured_pixels": 400}
+    """
+    try:
+        data = request.get_json()
+        distance_cm = float(data.get('distance_cm', 0))
+        measured_pixels = float(data.get('measured_pixels', 0))
+        
+        if distance_cm <= 0 or measured_pixels <= 0:
+            return jsonify({
+                'error': 'Invalid calibration values'
+            }), 400
+        
+        robot_controller.vo.calibrate_scale(distance_cm, measured_pixels)
+        
+        return jsonify({
+            'status': 'success',
+            'scale_factor': robot_controller.vo.scale_factor,
+            'message': f'Calibrated: 1 pixel = {robot_controller.vo.scale_factor:.4f} cm'
+        })
+    
+    except Exception as e:
+        logger.error(f"Error calibrating odometry: {e}")
+        return jsonify({'error': str(e)}), 500
+    
+
 # ===== SENSOR DATA =====
 
 
