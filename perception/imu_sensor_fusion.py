@@ -1,10 +1,9 @@
 """
-IMU Sensor with Complementary Filter (Production Ready)
-✅ Gyro + Accelerometer fusion
-✅ Drift reduction for Roll/Pitch
-✅ Temperature compensation
-✅ Dynamic recalibration
-✅ Connection monitoring
+IMU Sensor Fusion - FIXED VERSION
+Fix cho lỗi [Errno 121] khi i2cdetect thấy 0x68
+
+Vấn đề: Read quá nhanh sau khi wake up MPU-6050
+Giải pháp: Thêm delay và retry logic
 """
 
 import smbus2
@@ -19,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 class IMUSensorFusion:
     """
-    MPU-6050 với Complementary Filter
-    Kết hợp Gyro (smooth, có drift) + Accel (không drift, nhiễu)
+    MPU-6050 với Complementary Filter - FIXED VERSION
+    Thêm retry logic và proper initialization delays
     """
     
     # MPU-6050 Register Map
@@ -28,6 +27,7 @@ class IMUSensorFusion:
     GYRO_CONFIG = 0x1B
     ACCEL_CONFIG = 0x1C
     TEMP_OUT_H = 0x41
+    WHO_AM_I = 0x75
     
     ACCEL_XOUT_H = 0x3B
     ACCEL_YOUT_H = 0x3D
@@ -43,12 +43,11 @@ class IMUSensorFusion:
         self.connected = False
         
         # Orientation (Fused)
-        self.roll = 0.0   # X-axis rotation (Fused)
-        self.pitch = 0.0  # Y-axis rotation (Fused)
-        self.yaw = 0.0    # Z-axis rotation (Gyro only - still drifts!)
+        self.roll = 0.0
+        self.pitch = 0.0
+        self.yaw = 0.0
         
         # Complementary Filter coefficient
-        # 0.98 = 98% trust Gyro (short-term), 2% trust Accel (long-term)
         self.ALPHA = 0.98
         
         # Timing
@@ -62,42 +61,82 @@ class IMUSensorFusion:
         self.gyro_z_offset = 0.0
         self.accel_x_offset = 0.0
         self.accel_y_offset = 0.0
-        self.accel_z_offset = 1.0  # Gravity baseline
+        self.accel_z_offset = 1.0
         
-        # Temperature compensation
+        # Temperature
         self.temp_baseline = 0.0
-        self.temp_drift_coeff = 0.01  # deg/°C (empirical)
+        self.temp_drift_coeff = 0.01
         
-        # Dynamic recalibration (Detect when robot is stationary)
-        self.motion_history = deque(maxlen=50)  # Last 0.5s of motion
-        self.STATIONARY_THRESHOLD = 0.5  # deg/s
+        # Dynamic recalibration
+        self.motion_history = deque(maxlen=50)
+        self.STATIONARY_THRESHOLD = 0.5
         self.last_recalib_time = time.time()
-        self.RECALIB_INTERVAL = 30.0  # Auto recalibrate every 30s when stationary
+        self.RECALIB_INTERVAL = 30.0
         
         # Connection monitoring
         self.last_successful_read = time.time()
         self.CONNECTION_TIMEOUT = 5.0
         
+        # ===== THÊM: Retry counter =====
+        self.read_error_count = 0
+        self.MAX_READ_ERRORS = 5
+        
         # Initialize hardware
         self._init_hardware(bus_num)
     
     def _init_hardware(self, bus_num):
-        """Initialize MPU-6050"""
+        """Initialize MPU-6050 with proper delays"""
         try:
             self.bus = smbus2.SMBus(bus_num)
+            logger.info("I2C bus opened successfully")
             
-            # Wake up MPU-6050 (Write 0 to PWR_MGMT_1)
+            # ===== CRITICAL FIX 1: Verify device presence =====
+            logger.info("Verifying MPU-6050 presence...")
+            max_retries = 3
+            
+            for attempt in range(max_retries):
+                try:
+                    who_am_i = self.bus.read_byte_data(self.address, self.WHO_AM_I)
+                    
+                    if who_am_i == 0x68:
+                        logger.info(f"✅ MPU-6050 detected (WHO_AM_I = 0x{who_am_i:02X})")
+                        break
+                    else:
+                        logger.warning(f"⚠️ Unexpected WHO_AM_I: 0x{who_am_i:02X}")
+                        
+                except Exception as e:
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+                    time.sleep(0.5)
+                    
+                    if attempt == max_retries - 1:
+                        raise Exception("Failed to verify MPU-6050 after retries")
+            
+            # ===== CRITICAL FIX 2: Wake up with delay =====
+            logger.info("Waking up MPU-6050...")
             self.bus.write_byte_data(self.address, self.PWR_MGMT_1, 0)
+            time.sleep(0.3)  # ← INCREASED từ 0.1s → 0.3s
+            
+            # Verify wake up successful
+            pwr_mgmt = self.bus.read_byte_data(self.address, self.PWR_MGMT_1)
+            logger.info(f"Power Management register: 0x{pwr_mgmt:02X}")
+            
+            if pwr_mgmt != 0:
+                logger.warning(f"⚠️ PWR_MGMT_1 not zero after wake: 0x{pwr_mgmt:02X}")
+            
+            # ===== CRITICAL FIX 3: Configure with delays =====
+            logger.info("Configuring Gyro...")
+            self.bus.write_byte_data(self.address, self.GYRO_CONFIG, 0)
             time.sleep(0.1)
             
-            # Configure Gyro: ±250 deg/s (Most sensitive)
-            self.bus.write_byte_data(self.address, self.GYRO_CONFIG, 0)
-            
-            # Configure Accel: ±2g (Most sensitive)
+            logger.info("Configuring Accelerometer...")
             self.bus.write_byte_data(self.address, self.ACCEL_CONFIG, 0)
+            time.sleep(0.1)
             
-            # Read baseline temperature
-            self.temp_baseline = self._read_temperature()
+            # ===== CRITICAL FIX 4: Test read temperature first =====
+            logger.info("Testing sensor read...")
+            temp = self._read_temperature_safe()
+            logger.info(f"Initial temperature: {temp:.1f}°C")
+            self.temp_baseline = temp
             
             self.connected = True
             logger.info("✅ MPU-6050 initialized successfully")
@@ -108,35 +147,66 @@ class IMUSensorFusion:
         except Exception as e:
             logger.error(f"❌ MPU-6050 initialization failed: {e}")
             self.connected = False
+            
+            # Print troubleshooting hints
+            logger.error("\n🔧 Troubleshooting:")
+            logger.error("  1. Check wiring: VCC→Pin1, GND→Pin6, SDA→Pin3, SCL→Pin5")
+            logger.error("  2. Verify 3.3V (not 5V!) is used for VCC")
+            logger.error("  3. Run: sudo i2cdetect -y 1 (should see 68)")
+            logger.error("  4. Check for loose connections")
+    
+    def _read_word_safe(self, reg, max_retries=3):
+        """
+        Read signed 16-bit word with retry logic
+        FIX: Thêm retry để xử lý transient errors
+        """
+        for attempt in range(max_retries):
+            try:
+                h = self.bus.read_byte_data(self.address, reg)
+                l = self.bus.read_byte_data(self.address, reg + 1)
+                val = (h << 8) + l
+                
+                # Convert to signed
+                if val >= 0x8000:
+                    val = -((65535 - val) + 1)
+                
+                self.last_successful_read = time.time()
+                self.read_error_count = 0  # Reset error counter on success
+                return val
+                
+            except Exception as e:
+                self.read_error_count += 1
+                
+                if attempt < max_retries - 1:
+                    logger.warning(f"Read error at 0x{reg:02X}, retry {attempt + 1}/{max_retries}")
+                    time.sleep(0.01)  # Small delay before retry
+                else:
+                    logger.error(f"❌ Read failed at register 0x{reg:02X} after {max_retries} attempts: {e}")
+                    
+                    # Check if too many consecutive errors
+                    if self.read_error_count >= self.MAX_READ_ERRORS:
+                        logger.error("⚠️ Too many read errors! MPU-6050 may have disconnected.")
+                        self.connected = False
+                    
+                    self._check_connection()
+                    return 0
     
     def _read_word(self, reg):
-        """Read signed 16-bit word from register"""
-        try:
-            h = self.bus.read_byte_data(self.address, reg)
-            l = self.bus.read_byte_data(self.address, reg + 1)
-            val = (h << 8) + l
-            
-            # Convert to signed
-            if val >= 0x8000:
-                return -((65535 - val) + 1)
-            
-            self.last_successful_read = time.time()
-            return val
-            
-        except Exception as e:
-            logger.error(f"❌ Read error at register {hex(reg)}: {e}")
-            self._check_connection()
-            return 0
+        """Wrapper cho compatibility"""
+        return self._read_word_safe(reg)
     
-    def _read_temperature(self):
-        """Read internal temperature (°C)"""
+    def _read_temperature_safe(self):
+        """Read temperature with error handling"""
         try:
-            temp_raw = self._read_word(self.TEMP_OUT_H)
-            # Formula from datasheet: Temp = (TEMP_OUT / 340) + 36.53
+            temp_raw = self._read_word_safe(self.TEMP_OUT_H)
             temp_c = (temp_raw / 340.0) + 36.53
             return temp_c
         except:
             return self.temp_baseline
+    
+    def _read_temperature(self):
+        """Wrapper cho compatibility"""
+        return self._read_temperature_safe()
     
     def _check_connection(self):
         """Monitor connection health"""
@@ -147,7 +217,7 @@ class IMUSensorFusion:
     def _calibrate(self, samples=500):
         """
         Calibrate gyro and accelerometer offsets
-        Robot MUST be stationary on flat surface!
+        FIX: Thêm error handling trong calibration
         """
         if not self.connected:
             return
@@ -157,46 +227,67 @@ class IMUSensorFusion:
         sum_gx, sum_gy, sum_gz = 0, 0, 0
         sum_ax, sum_ay, sum_az = 0, 0, 0
         
+        valid_samples = 0
+        
         for i in range(samples):
-            # Read raw values
-            sum_gx += self._read_word(self.GYRO_XOUT_H)
-            sum_gy += self._read_word(self.GYRO_YOUT_H)
-            sum_gz += self._read_word(self.GYRO_ZOUT_H)
-            
-            sum_ax += self._read_word(self.ACCEL_XOUT_H)
-            sum_ay += self._read_word(self.ACCEL_YOUT_H)
-            sum_az += self._read_word(self.ACCEL_ZOUT_H)
-            
-            if i % 100 == 0:
-                logger.info(f"Calibration progress: {i}/{samples}")
-            
-            time.sleep(0.01)
+            try:
+                # Read raw values
+                gx = self._read_word_safe(self.GYRO_XOUT_H)
+                gy = self._read_word_safe(self.GYRO_YOUT_H)
+                gz = self._read_word_safe(self.GYRO_ZOUT_H)
+                
+                ax = self._read_word_safe(self.ACCEL_XOUT_H)
+                ay = self._read_word_safe(self.ACCEL_YOUT_H)
+                az = self._read_word_safe(self.ACCEL_ZOUT_H)
+                
+                # Only count if read successful (non-zero)
+                if gx != 0 or gy != 0 or gz != 0:
+                    sum_gx += gx
+                    sum_gy += gy
+                    sum_gz += gz
+                    
+                    sum_ax += ax
+                    sum_ay += ay
+                    sum_az += az
+                    
+                    valid_samples += 1
+                
+                if i % 100 == 0:
+                    logger.info(f"Calibration progress: {i}/{samples} ({valid_samples} valid)")
+                
+                time.sleep(0.01)
+                
+            except Exception as e:
+                logger.warning(f"Calibration sample {i} failed: {e}")
+                continue
+        
+        if valid_samples < samples * 0.8:
+            logger.error(f"⚠️ Low valid sample rate: {valid_samples}/{samples}")
+            logger.error("Calibration may be inaccurate. Check connections.")
         
         # Calculate offsets
-        self.gyro_x_offset = sum_gx / samples
-        self.gyro_y_offset = sum_gy / samples
-        self.gyro_z_offset = sum_gz / samples
-        
-        # Accel offsets (Z should be ~1g = 16384 for ±2g range)
-        self.accel_x_offset = sum_ax / samples
-        self.accel_y_offset = sum_ay / samples
-        self.accel_z_offset = (sum_az / samples) - 16384  # Remove gravity
-        
-        logger.info(f"✅ Calibration Complete!")
-        logger.info(f"   Gyro Offsets: X={self.gyro_x_offset:.1f}, "
-                   f"Y={self.gyro_y_offset:.1f}, Z={self.gyro_z_offset:.1f}")
-        logger.info(f"   Accel Offsets: X={self.accel_x_offset:.1f}, "
-                   f"Y={self.accel_y_offset:.1f}, Z={self.accel_z_offset:.1f}")
+        if valid_samples > 0:
+            self.gyro_x_offset = sum_gx / valid_samples
+            self.gyro_y_offset = sum_gy / valid_samples
+            self.gyro_z_offset = sum_gz / valid_samples
+            
+            self.accel_x_offset = sum_ax / valid_samples
+            self.accel_y_offset = sum_ay / valid_samples
+            self.accel_z_offset = (sum_az / valid_samples) - 16384
+            
+            logger.info(f"✅ Calibration Complete! ({valid_samples} valid samples)")
+            logger.info(f"   Gyro Offsets: X={self.gyro_x_offset:.1f}, "
+                       f"Y={self.gyro_y_offset:.1f}, Z={self.gyro_z_offset:.1f}")
+            logger.info(f"   Accel Offsets: X={self.accel_x_offset:.1f}, "
+                       f"Y={self.accel_y_offset:.1f}, Z={self.accel_z_offset:.1f}")
+        else:
+            logger.error("❌ Calibration failed - no valid samples!")
     
     def _dynamic_recalibrate(self):
-        """
-        Auto recalibrate when robot is stationary
-        Helps reduce long-term drift
-        """
+        """Auto recalibrate when robot is stationary"""
         if len(self.motion_history) < 50:
             return
         
-        # Check if robot has been stationary
         avg_motion = sum(self.motion_history) / len(self.motion_history)
         
         if avg_motion < self.STATIONARY_THRESHOLD:
@@ -205,19 +296,25 @@ class IMUSensorFusion:
             if current_time - self.last_recalib_time > self.RECALIB_INTERVAL:
                 logger.info("🔄 Auto-recalibrating (robot stationary)...")
                 
-                # Quick recalibration (50 samples)
                 sum_gz = 0
+                valid = 0
+                
                 for _ in range(50):
-                    sum_gz += self._read_word(self.GYRO_ZOUT_H)
-                    time.sleep(0.01)
+                    try:
+                        gz = self._read_word_safe(self.GYRO_ZOUT_H)
+                        if gz != 0:
+                            sum_gz += gz
+                            valid += 1
+                        time.sleep(0.01)
+                    except:
+                        continue
                 
-                new_offset = sum_gz / 50
-                
-                # Smooth transition (don't jump suddenly)
-                self.gyro_z_offset = 0.9 * self.gyro_z_offset + 0.1 * new_offset
+                if valid > 25:  # At least 50% success rate
+                    new_offset = sum_gz / valid
+                    self.gyro_z_offset = 0.9 * self.gyro_z_offset + 0.1 * new_offset
+                    logger.info(f"✅ Recalibration done. New Z offset: {self.gyro_z_offset:.1f}")
                 
                 self.last_recalib_time = current_time
-                logger.info(f"✅ Recalibration done. New Z offset: {self.gyro_z_offset:.1f}")
     
     def start(self):
         """Start sensor update thread"""
@@ -248,97 +345,99 @@ class IMUSensorFusion:
         """Main sensor fusion loop (100Hz)"""
         logger.info("🔄 IMU update loop started")
         
+        consecutive_errors = 0
+        MAX_CONSECUTIVE_ERRORS = 10
+        
         while self.running and self.connected:
             try:
                 current_time = time.time()
                 dt = current_time - self.prev_time
                 self.prev_time = current_time
                 
-                # Prevent division by zero
                 if dt <= 0 or dt > 0.1:
                     dt = 0.01
                 
                 # ===== READ GYRO =====
-                gyro_x_raw = self._read_word(self.GYRO_XOUT_H)
-                gyro_y_raw = self._read_word(self.GYRO_YOUT_H)
-                gyro_z_raw = self._read_word(self.GYRO_ZOUT_H)
+                gyro_x_raw = self._read_word_safe(self.GYRO_XOUT_H)
+                gyro_y_raw = self._read_word_safe(self.GYRO_YOUT_H)
+                gyro_z_raw = self._read_word_safe(self.GYRO_ZOUT_H)
                 
-                # Convert to deg/s (131 LSB/(deg/s) for ±250 deg/s range)
                 gyro_x = (gyro_x_raw - self.gyro_x_offset) / 131.0
                 gyro_y = (gyro_y_raw - self.gyro_y_offset) / 131.0
                 gyro_z = (gyro_z_raw - self.gyro_z_offset) / 131.0
                 
-                # Temperature compensation for Yaw
-                current_temp = self._read_temperature()
+                # Temperature compensation
+                current_temp = self._read_temperature_safe()
                 temp_drift = (current_temp - self.temp_baseline) * self.temp_drift_coeff
                 gyro_z -= temp_drift
                 
-                # Track motion for dynamic recalibration
+                # Track motion
                 motion_magnitude = math.sqrt(gyro_x**2 + gyro_y**2 + gyro_z**2)
                 self.motion_history.append(motion_magnitude)
                 
                 # ===== READ ACCELEROMETER =====
-                accel_x_raw = self._read_word(self.ACCEL_XOUT_H)
-                accel_y_raw = self._read_word(self.ACCEL_YOUT_H)
-                accel_z_raw = self._read_word(self.ACCEL_ZOUT_H)
+                accel_x_raw = self._read_word_safe(self.ACCEL_XOUT_H)
+                accel_y_raw = self._read_word_safe(self.ACCEL_YOUT_H)
+                accel_z_raw = self._read_word_safe(self.ACCEL_ZOUT_H)
                 
-                # Convert to g (16384 LSB/g for ±2g range)
                 accel_x = (accel_x_raw - self.accel_x_offset) / 16384.0
                 accel_y = (accel_y_raw - self.accel_y_offset) / 16384.0
                 accel_z = (accel_z_raw - self.accel_z_offset) / 16384.0
                 
-                # ===== CALCULATE ANGLES FROM ACCELEROMETER =====
-                # (Stable long-term, but noisy)
+                # ===== CALCULATE ANGLES =====
                 accel_roll = math.atan2(accel_y, accel_z) * 180 / math.pi
-                accel_pitch = math.atan2(-accel_x, 
-                                        math.sqrt(accel_y**2 + accel_z**2)) * 180 / math.pi
+                accel_pitch = math.atan2(-accel_x, math.sqrt(accel_y**2 + accel_z**2)) * 180 / math.pi
                 
-                # ===== COMPLEMENTARY FILTER: Fuse Gyro + Accel =====
-                # Roll (X-axis)
+                # ===== COMPLEMENTARY FILTER =====
                 gyro_roll = self.roll + gyro_x * dt
                 self.roll = self.ALPHA * gyro_roll + (1 - self.ALPHA) * accel_roll
                 
-                # Pitch (Y-axis)
                 gyro_pitch = self.pitch + gyro_y * dt
                 self.pitch = self.ALPHA * gyro_pitch + (1 - self.ALPHA) * accel_pitch
                 
-                # Yaw (Z-axis) - GYRO ONLY (Still drifts, needs magnetometer to fix)
-                if abs(gyro_z) > 0.5:  # Noise gate
+                # Yaw (Gyro only)
+                if abs(gyro_z) > 0.5:
                     self.yaw += gyro_z * dt
                 
-                # Keep Yaw in [-180, 180] range
+                # Keep Yaw in [-180, 180]
                 if self.yaw > 180:
                     self.yaw -= 360
                 elif self.yaw < -180:
                     self.yaw += 360
                 
-                # ===== DYNAMIC RECALIBRATION =====
+                # Dynamic recalibration
                 self._dynamic_recalibrate()
+                
+                # Reset error counter on success
+                consecutive_errors = 0
                 
                 time.sleep(0.01)  # 100Hz
                 
             except Exception as e:
+                consecutive_errors += 1
                 logger.error(f"❌ Error in update loop: {e}")
+                
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    logger.error("⚠️ Too many consecutive errors! Stopping IMU.")
+                    self.connected = False
+                    break
+                
                 time.sleep(0.1)
         
         logger.info("🛑 IMU update loop ended")
     
-    # ===== PUBLIC INTERFACE =====
+    # ===== PUBLIC INTERFACE (Giữ nguyên) =====
     
     def get_yaw(self):
-        """Get Yaw angle (Z-axis rotation) - Note: Still has drift!"""
         return self.yaw
     
     def get_roll(self):
-        """Get Roll angle (X-axis rotation) - Fused, minimal drift"""
         return self.roll
     
     def get_pitch(self):
-        """Get Pitch angle (Y-axis rotation) - Fused, minimal drift"""
         return self.pitch
     
     def get_orientation(self):
-        """Get all angles"""
         return {
             'roll': self.roll,
             'pitch': self.pitch,
@@ -347,57 +446,55 @@ class IMUSensorFusion:
         }
     
     def reset_yaw(self):
-        """Reset Yaw angle to 0"""
         self.yaw = 0.0
         logger.info("🔄 Yaw reset to 0°")
     
     def reset_all(self):
-        """Reset all angles to 0"""
         self.roll = 0.0
         self.pitch = 0.0
         self.yaw = 0.0
         logger.info("🔄 All angles reset")
     
     def is_level(self, tolerance=5.0):
-        """Check if robot is level (for safe operation)"""
         return abs(self.roll) < tolerance and abs(self.pitch) < tolerance
     
     def get_status(self):
-        """Get comprehensive status"""
         return {
             'connected': self.connected,
             'running': self.running,
             'roll': self.roll,
             'pitch': self.pitch,
             'yaw': self.yaw,
-            'temperature': self._read_temperature(),
+            'temperature': self._read_temperature_safe(),
             'is_level': self.is_level(),
-            'last_read_age': time.time() - self.last_successful_read
+            'last_read_age': time.time() - self.last_successful_read,
+            'read_error_count': self.read_error_count
         }
 
 
-# ===== TESTING PROGRAM =====
+# ===== TESTING =====
 if __name__ == "__main__":
     import sys
     
-    # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
     print("\n" + "="*60)
-    print("MPU-6050 Sensor Fusion Test")
+    print("MPU-6050 Sensor Fusion Test (FIXED VERSION)")
     print("="*60 + "\n")
     
-    # Initialize
     imu = IMUSensorFusion()
     
     if not imu.connected:
         print("❌ Failed to connect to IMU!")
+        print("\n🔧 Troubleshooting:")
+        print("  1. Run: sudo i2cdetect -y 1 (must see 68)")
+        print("  2. Check wiring")
+        print("  3. Verify 3.3V power")
         sys.exit(1)
     
-    # Start
     if not imu.start():
         print("❌ Failed to start IMU!")
         sys.exit(1)
@@ -409,12 +506,16 @@ if __name__ == "__main__":
         while True:
             status = imu.get_status()
             
-            # Display
+            if not status['connected']:
+                print("\n❌ IMU disconnected!")
+                break
+            
             print(f"\r"
                   f"Roll: {status['roll']:7.2f}°  |  "
                   f"Pitch: {status['pitch']:7.2f}°  |  "
                   f"Yaw: {status['yaw']:7.2f}°  |  "
                   f"Temp: {status['temperature']:.1f}°C  |  "
+                  f"Errors: {status['read_error_count']}  |  "
                   f"Level: {'✅' if status['is_level'] else '❌'}",
                   end="", flush=True)
             
