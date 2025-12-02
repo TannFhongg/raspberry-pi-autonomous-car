@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LogisticsBot Control Panel</title>
-    
+
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
@@ -12,6 +13,7 @@
     <!-- Custom CSS -->
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
 </head>
+
 <body>
     <div class="main-container">
         <!-- Top Navigation Bar -->
@@ -108,64 +110,8 @@
                                 <span class="tracking-badge tracking-lost">Lost Target</span>
                             </div>
                         </div>
-                        
 
-                        <!-- Visual Odometry Status Card -->
-<div class="col-md-6">
-    <div class="card">
-        <div class="card-header bg-info text-white">
-            <h5 class="mb-0">📍 Visual Odometry</h5>
-        </div>
-        <div class="card-body">
-            <div id="vo-status">
-                <div class="row mb-2">
-                    <div class="col-6">
-                        <strong>Distance:</strong>
-                    </div>
-                    <div class="col-6">
-                        <span id="vo-distance" class="badge badge-primary">0.0 cm</span>
-                    </div>
-                </div>
-                
-                <div class="row mb-2">
-                    <div class="col-6">
-                        <strong>Velocity:</strong>
-                    </div>
-                    <div class="col-6">
-                        <span id="vo-velocity" class="badge badge-info">0.0 cm/s</span>
-                    </div>
-                </div>
-                
-                <div class="row mb-2">
-                    <div class="col-6">
-                        <strong>Quality:</strong>
-                    </div>
-                    <div class="col-6">
-                        <span id="vo-quality" class="badge badge-success">N/A</span>
-                    </div>
-                </div>
-                
-                <div class="row mb-2">
-                    <div class="col-6">
-                        <strong>Position:</strong>
-                    </div>
-                    <div class="col-6">
-                        <small>X: <span id="vo-pos-x">0.0</span> cm</small><br>
-                        <small>Y: <span id="vo-pos-y">0.0</span> cm</small>
-                    </div>
-                </div>
-                
-                <div class="row">
-                    <div class="col-12">
-                        <button class="btn btn-sm btn-warning btn-block" onclick="resetOdometry()">
-                            🔄 Reset Position
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+
 
                         <!-- NEW: Detection Confidence -->
                         <div class="status-item" id="confidenceItem" style="display: none;">
@@ -216,7 +162,8 @@
                             <label><i class="fas fa-cog"></i> Mode:</label>
                             <div class="mode-selector">
                                 <label class="mode-option">
-                                    <input type="radio" name="mode" value="manual" id="modeManual" checked onchange="toggleMode()">
+                                    <input type="radio" name="mode" value="manual" id="modeManual" checked
+                                        onchange="toggleMode()">
                                     <span>Manual</span>
                                 </label>
                                 <label class="mode-option">
@@ -224,7 +171,8 @@
                                     <span>Auto</span>
                                 </label>
                                 <label class="mode-option">
-                                    <input type="radio" name="mode" value="follow" id="modeFollow" onchange="toggleMode()">
+                                    <input type="radio" name="mode" value="follow" id="modeFollow"
+                                        onchange="toggleMode()">
                                     <span>Follow</span>
                                 </label>
                             </div>
@@ -243,18 +191,24 @@
                             <div class="control-item">
                                 <label><i class="fas fa-palette"></i> Target Color:</label>
                                 <div class="color-selector">
-                                    <button class="color-btn color-red active" data-color="red" onclick="selectColor('red')"></button>
-                                    <button class="color-btn color-green" data-color="green" onclick="selectColor('green')"></button>
-                                    <button class="color-btn color-blue" data-color="blue" onclick="selectColor('blue')"></button>
-                                    <button class="color-btn color-yellow" data-color="yellow" onclick="selectColor('yellow')"></button>
-                                    <button class="color-btn color-orange" data-color="orange" onclick="selectColor('orange')"></button>
+                                    <button class="color-btn color-red active" data-color="red"
+                                        onclick="selectColor('red')"></button>
+                                    <button class="color-btn color-green" data-color="green"
+                                        onclick="selectColor('green')"></button>
+                                    <button class="color-btn color-blue" data-color="blue"
+                                        onclick="selectColor('blue')"></button>
+                                    <button class="color-btn color-yellow" data-color="yellow"
+                                        onclick="selectColor('yellow')"></button>
+                                    <button class="color-btn color-orange" data-color="orange"
+                                        onclick="selectColor('orange')"></button>
                                 </div>
                             </div>
 
                             <!-- Follow Distance -->
                             <div class="control-item">
                                 <label><i class="fas fa-ruler"></i> Follow Distance:</label>
-                                <input type="range" class="distance-slider" id="followDistanceSlider" min="20" max="100" value="50">
+                                <input type="range" class="distance-slider" id="followDistanceSlider" min="20" max="100"
+                                    value="50">
                                 <span class="distance-display" id="followDistanceDisplay">50 cm</span>
                             </div>
                         </div>
@@ -270,27 +224,63 @@
 
             <!-- Row 3: Sensors -->
             <div class="grid-row-3">
-                <!-- Line Sensors -->
-                <div class="panel sensor-panel">
-                    <div class="panel-header">
-                        <i class="fas fa-road"></i> LINE SENSORS
-                    </div>
-                    <div class="panel-body sensor-body">
-                        <div class="line-sensor-display" id="lineSensors">
-                            <span class="sensor-bar"></span>
-                            <span class="sensor-bar"></span>
-                            <span class="sensor-bar active"></span>
-                            <span class="sensor-bar active"></span>
-                            <span class="sensor-bar active"></span>
-                            <span class="sensor-bar active"></span>
-                            <span class="sensor-bar"></span>
-                            <span class="sensor-bar"></span>
+                <!-- Visual Odometry Status Card -->
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header bg-info text-white">
+                            <h5 class="mb-0">📍 Visual Odometry</h5>
                         </div>
-                        <div class="sensor-info">
-                            Position: <strong id="linePosition">+2</strong>
+                        <div class="card-body">
+                            <div id="vo-status">
+                                <div class="row mb-2">
+                                    <div class="col-6">
+                                        <strong>Distance:</strong>
+                                    </div>
+                                    <div class="col-6">
+                                        <span id="vo-distance" class="badge badge-primary">0.0 cm</span>
+                                    </div>
+                                </div>
+
+                                <div class="row mb-2">
+                                    <div class="col-6">
+                                        <strong>Velocity:</strong>
+                                    </div>
+                                    <div class="col-6">
+                                        <span id="vo-velocity" class="badge badge-info">0.0 cm/s</span>
+                                    </div>
+                                </div>
+
+                                <div class="row mb-2">
+                                    <div class="col-6">
+                                        <strong>Quality:</strong>
+                                    </div>
+                                    <div class="col-6">
+                                        <span id="vo-quality" class="badge badge-success">N/A</span>
+                                    </div>
+                                </div>
+
+                                <div class="row mb-2">
+                                    <div class="col-6">
+                                        <strong>Position:</strong>
+                                    </div>
+                                    <div class="col-6">
+                                        <small>X: <span id="vo-pos-x">0.0</span> cm</small><br>
+                                        <small>Y: <span id="vo-pos-y">0.0</span> cm</small>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-12">
+                                        <button class="btn btn-sm btn-warning btn-block" onclick="resetOdometry()">
+                                            🔄 Reset Position
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
+
 
                 <!-- Ultrasonic Sensor -->
                 <div class="panel sensor-panel">
@@ -368,4 +358,5 @@
     <!-- Custom JS -->
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
+
 </html>

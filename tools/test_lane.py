@@ -52,8 +52,8 @@ for filename in test_files:
         print(f"{filename:<20} | ❌ Lỗi đọc file ảnh")
         continue
 
-    # === BỔ SUNG: Resize về chuẩn 640x480 để khớp thông số Lane Detector ===
-    frame = cv2.resize(frame, (640, 480))
+    # === BỔ SUNG: Resize về chuẩn 1640x1232 để khớp thông số Lane Detector ===
+    frame = cv2.resize(frame, (1640, 1232))
     # ======================================================================
 
     # 3. Chạy thuật toán phát hiện làn đường

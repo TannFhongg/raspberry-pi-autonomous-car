@@ -13,7 +13,7 @@ def chup_anh_chat_luong_cao(ten_file="anh_pi5.jpg"):
         # Camera V2 có độ phân giải max là 3280 x 2464
         # Chúng ta dùng create_still_configuration để ưu tiên chất lượng
         config = picam2.create_still_configuration(
-            main={"size": (3280, 2464), "format": "RGB888"}
+            main={"size": (1640, 1232), "format": "RGB888"}
         ) 
         picam2.configure(config)
 

@@ -1,7 +1,7 @@
 # Hardware Configuration for Raspberry Pi 5 + Arduino Uno
 # Robot: 2 rear motors + 1 front universal wheel
 # Lane Detection: Camera ONLY (No IR sensors)
-# UPDATED: Added Picamera2 support
+# UPDATED: Added Picamera2 support (Full FOV 1640x1232)
 
 # Control Mode: 'arduino' or 'direct'
 control_mode: 'arduino'
@@ -73,193 +73,139 @@ sensors:
     min_distance: 2.0     # cm
     update_rate: 10       # Hz
   
-  # NO IR LINE SENSORS
-  # Line detection is done by camera only
+  # NO IR LINE SENSORS (Camera only)
   line_sensors:
-    enabled: false        # Disabled - camera only
+    enabled: false
     count: 0
     pins: []
   
   # Raspberry Pi Camera (PRIMARY - Lane Detection)
-  # UPDATED: Added Picamera2 configuration
   camera:
     enabled: true
-    backend: 'picamera2'      # NEW: Specify Picamera2 backend
-    resolution: [640, 480]    # Higher resolution for better lane detection
-    framerate: 30             # Higher FPS for smoother detection
-    device: 0                 # Camera index (not used by Picamera2, but kept for compatibility)
+    backend: 'picamera2'
+    resolution: [1640, 1232]   # <--- ĐÃ SỬA: GÓC RỘNG (Full FOV)
+    framerate: 30
+    device: 0
     
-    # Legacy camera settings (for reference)
-    auto_exposure: true
-    brightness: 50
-    contrast: 50
-    saturation: 50
-    
-    # NEW: Picamera2 specific settings
+    # Picamera2 specific settings
     picamera2:
-      format: 'RGB888'        # Color format (RGB888, YUV420, etc.)
-      buffer_count: 4         # Number of buffers for smooth capture
+      format: 'RGB888'
+      buffer_count: 4
       
-      # Camera controls (optional - can be tuned)
+      # Camera controls (Tối ưu cho vạch đen nền trắng)
       controls:
-        FrameRate: 30         # Target frame rate
-        ExposureTime: null    # Auto exposure (null = auto, or set microseconds)
-        AnalogueGain: 1.0     # Gain multiplier (1.0 = normal)
-        Brightness: 0.0       # Brightness adjustment (-1.0 to 1.0)
-        Contrast: 1.0         # Contrast multiplier (1.0 = normal)
-        Saturation: 1.0       # Saturation multiplier (1.0 = normal)
+        FrameRate: 30
+        ExposureTime: null
+        AnalogueGain: 1.0
+        Brightness: 0.0
+        Contrast: 1.2          # Tăng tương phản
+        Saturation: 0.8        # Giảm bão hòa màu
+        Sharpness: 1.2         # Tăng độ nét cạnh
 
 # AI/Computer Vision Settings
 ai:
-  # Lane Detection (Camera-based) - UPDATED WITH PID COMPATIBLE SETTINGS
+  # Lane Detection (Camera-based) - OPTIMIZED FOR BLACK LINES
   lane_detection:
     enabled: true
-    method: 'opencv'        # 'opencv', 'cnn', or 'hybrid'
+    method: 'opencv'
     
-    # OpenCV lane detection settings
-    roi_top_ratio: 0.5      # Region of interest (top 50% of frame)
-    roi_bottom_ratio: 1.0   # Bottom 100% of frame
-    canny_low: 50
-    canny_high: 150
-    hough_threshold: 20     # Lower = more sensitive // truoc la 30
-    min_line_length: 30     # Minimum line length in pixels // trupc la 40
-    max_line_gap: 20       # Maximum gap between line segments // truoc la 100
-
-    # hough_threshold: 20       # GIẢM từ 40 xuống 20 (Để bắt được vạch mờ/ngắn hơn)
-    # min_line_length: 30       # GIẢM từ 50 xuống 30 (Quan trọng! Để bắt được vạch ngắn)
-    # max_line_gap: 20          # Giữ nguyên số nhỏ này (để tránh nối bậy)
-
-
-    blur_kernel: 5          # Gaussian blur kernel size
+    # Physical parameters
+    lane_width_cm: 38
+    robot_width_cm: 15
+    lane_width_pixels: 280  # Đã ước tính cho độ phân giải 1640x1232 (resize về 640)
     
-    # Lane tracking
-    smoothing_factor: 0.8   # Smooth lane transitions (0-1)
-    confidence_threshold: 0.7
-  
-  # Object Detection (for Follow mode)
-  object_detection:
-    enabled: false          # Enable when needed
-    model: 'yolov5s'
-    confidence_threshold: 0.5
-  
-  # Color Tracking (for Follow mode)
-  color_tracking:
-    enabled: true
-    colors:
-      red:
-        lower_hsv: [0, 100, 100]
-        upper_hsv: [10, 255, 255]
-      green:
-        lower_hsv: [40, 50, 50]
-        upper_hsv: [80, 255, 255]
-      blue:
-        lower_hsv: [100, 50, 50]
-        upper_hsv: [130, 255, 255]
-      yellow:
-        lower_hsv: [20, 100, 100]
-        upper_hsv: [30, 255, 255]
-      orange:
-        lower_hsv: [10, 100, 100]
-        upper_hsv: [20, 255, 255]
+    # OpenCV settings - TUNED FOR BLACK LINES
+    roi_top_ratio: 0.4
+    roi_bottom_ratio: 1.0
+    
+    canny_low: 30
+    canny_high: 100
+    
+    hough_threshold: 15
+    min_line_length: 25
+    max_line_gap: 15
+    
+    blur_kernel: 7
+    use_clahe: true
+    invert_grayscale: true  # Đảo màu để tìm vạch đen
+    
+    min_slope: 0.4
+    smoothing_factor: 0.7
+    confidence_threshold: 0.6
+    
+    lane_lost_threshold: 10
+    lane_lost_action: 'stop'
+    
+    # Adaptive Threshold (Fallback)
+    adaptive:
+      enabled: true
+      block_size: 15
+      c_value: 5
+      min_contour_area: 100
+      use_when_hough_fails: true
 
-# Lane Following Settings (PID-based) - UPDATED FOR PID CONTROLLER
+# Lane Following Settings (PID-based)
 lane_following:
   enabled: true
   
   # PID Controller parameters
-  # Start with these values and tune based on your robot's behavior
   pid:
-    kp: 0.8              # Proportional gain (start here, tune first)
-    ki: 0.0              # Integral gain (usually 0 or very small)
-    kd: 0.3              # Derivative gain (damping, reduces oscillation)
-    
-    # PID output limits (steering correction)
-    max_output: 255      # Maximum steering correction
-    min_output: -255     # Minimum steering correction
-    
-    # Advanced PID settings
-    derivative_smoothing: 0.7  # Smoothing factor for derivative (0-1)
-    integral_limit: 100        # Anti-windup: max integral accumulation
+    kp: 1.0
+    ki: 0.02
+    kd: 0.4
+    max_output: 255
+    min_output: -255
+    derivative_smoothing: 0.7
+    integral_limit: 100
   
   # Speed settings
-  base_speed: 150        # Base forward speed (PWM 0-255)
-  max_speed: 255        # Maximum speed
-  min_speed: 100          # Minimum speed (when correcting heavily)
+  base_speed: 130
+  max_speed: 200
+  min_speed: 80
   
   # Steering settings
-  max_steering_angle: 45      # degrees (for reference)
-  steering_sensitivity: 1.0   # Steering multiplier
-  
-  # Lane loss handling
-  lane_lost_threshold: 10     # Frames before considering lane lost
-  lane_lost_action: 'stop'    # 'stop', 'slow', or 'continue'
+  max_steering_angle: 45
+  steering_sensitivity: 1.2
 
-# Follow Mode Settings
-follow_mode:
-  default_distance: 50  # cm
-  min_distance: 20      # cm
-  max_distance: 100     # cm
-  angle_tolerance: 0.1  # radians
-  speed_multiplier: 0.8
-  
-  # PID for follow mode (optional)
-  pid:
-    kp: 0.6
+# PID Tuning Presets
+pid_presets:
+  conservative:
+    kp: 0.7
+    ki: 0.01
+    kd: 0.25
+  balanced:
+    kp: 1.0
+    ki: 0.02
+    kd: 0.4
+  aggressive:
+    kp: 1.5
+    ki: 0.03
+    kd: 0.6
+  ultra_safe:
+    kp: 0.5
     ki: 0.0
     kd: 0.2
 
 # Logging
 logging:
-  level: 'INFO'  # DEBUG, INFO, WARNING, ERROR
+  level: 'DEBUG'
   file: 'data/logs/robot.log'
-  max_size: 10485760  # 10MB
+  max_size: 10485760
   backup_count: 5
+  log_lane_details: true
+  log_frequency: 10
+  save_debug_frames: false
 
-# PID Tuning Presets (Quick switching)
-# Copy values to lane_following.pid section above
-pid_presets:
-  # Conservative - Smooth but slow response
-  conservative:
-    kp: 0.5
-    ki: 0.0
-    kd: 0.2
-  
-  # Balanced - Good all-around performance
-  balanced:
-    kp: 0.8
-    ki: 0.0
-    kd: 0.3
-  
-  # Aggressive - Fast response, may oscillate
-  aggressive:
-    kp: 1.2
-    ki: 0.0
-    kd: 0.5
-  
-  # With Integral - For steady-state error correction
-  with_integral:
-    kp: 0.8
-    ki: 0.01
-    kd: 0.3
-
-  # Visual Odometry Settings
+# Visual Odometry Settings
 visual_odometry:
   enabled: true
-  scale_factor: 0.05  # 1 pixel = 0.05 cm (Cần calibrate lại)
-  
-  # Feature detection
+  scale_factor: 0.05
   max_features: 200
   quality_level: 0.01
   min_distance: 10
-  
-  # Optical Flow
   window_size: 21
   max_level: 3
-  
-  # Outlier rejection
   use_ransac: true
   ransac_threshold: 3.0
-  
-  # Feature management
   min_features: 50
-  redetect_interval: 30  # frames
+  redetect_interval: 30

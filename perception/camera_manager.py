@@ -32,7 +32,7 @@ class CameraManager:
 
         # Get camera settings from config
         camera_config = self.config.get("sensors", {}).get("camera", {})
-        self.resolution = tuple(camera_config.get("resolution", [640, 480]))
+        self.resolution = tuple(camera_config.get("resolution", [1640, 1232]))
         self.framerate = camera_config.get("framerate", 30)
 
         # Picamera2 specific settings
