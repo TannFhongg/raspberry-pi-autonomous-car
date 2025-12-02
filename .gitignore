@@ -1,7 +1,7 @@
 # Python cache
 __pycache__/
 *.pyc
-*.jpg
+
 # Virtual environments
 venv/
 env/
