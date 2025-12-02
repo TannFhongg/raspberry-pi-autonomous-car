@@ -128,7 +128,7 @@ def detect_line(frame, config=None):
     
     # Giả định độ rộng đường (đo trên ảnh Straight debug của bạn)
     # Khoảng cách giữa 2 chấm xanh ~ 220 pixel
-    LANE_WIDTH = 310 
+    LANE_WIDTH = 555 
     
     if left_lane_x is not None and right_lane_x is not None:
         # Trường hợp hoàn hảo: Thấy cả 2

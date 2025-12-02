@@ -29,7 +29,7 @@ except Exception as e:
     lane_config = None
 
 # Danh sách ảnh cần test (Ảnh bạn đã tạo trước đó)
-test_files = ['road_straight.jpg', 'road_curve_left.jpg', 'road_curve_right.jpg']
+test_files = ['test_full_hd.jpg', 'road_curve_left.jpg', 'road_curve_right.jpg']
 
 print("\n" + "="*60)
 print("TEST LANE DETECTION VỚI ẢNH TĨNH")
@@ -37,9 +37,13 @@ print("="*60)
 print(f"{'FILENAME':<20} | {'ERROR':<10} | {'ACTION'}")
 print("-" * 60)
 
+# ... (Phần đầu giữ nguyên) ...
+
+print("-" * 60)
+
 for filename in test_files:
     if not os.path.exists(filename):
-        print(f"{filename:<20} | ⚠️ File không tồn tại (Cần tạo lại ảnh)")
+        print(f"{filename:<20} | ⚠️ File không tồn tại")
         continue
         
     # 2. Đọc ảnh
@@ -48,8 +52,11 @@ for filename in test_files:
         print(f"{filename:<20} | ❌ Lỗi đọc file ảnh")
         continue
 
+    # === BỔ SUNG: Resize về chuẩn 640x480 để khớp thông số Lane Detector ===
+    frame = cv2.resize(frame, (640, 480))
+    # ======================================================================
+
     # 3. Chạy thuật toán phát hiện làn đường
-    # Truyền lane_config vào để áp dụng các thay đổi Hough/Slope
     error, x_line, center_x, debug_frame = detect_line(frame, config=lane_config)
     
     # 4. Đánh giá hành động
@@ -68,4 +75,4 @@ for filename in test_files:
     cv2.imwrite(out_name, debug_frame)
 
 print("-" * 60)
-print("✅ Hoàn tất! Hãy mở các file 'debug_*.jpg' để kiểm tra đường vẽ màu xanh.")
+print("✅ Hoàn tất! Hãy kiểm tra các file 'debug_*.jpg'.")
