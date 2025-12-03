@@ -1,19 +1,19 @@
 """
-Test Lane Detection - OPTIMIZED VERSION
-Tests both Hough-based and Adaptive Threshold methods
-Includes calibration tool
+Test Lane Detection - FIXED VERSION
+- Hỗ trợ resolution 1640x1232 (tự động resize về 640x480)
+- KHÔNG dùng cv2.imshow() (không có màn hình ngoài)
+- Lưu tất cả kết quả ra file ảnh
 """
+import numpy as np
 
 import cv2
 import os
 import sys
 import yaml
 
-# Thêm đường dẫn
 sys.path.append(os.getcwd())
 
 try:
-    # Import cả 2 phương pháp
     from perception.lane_detector import (
         detect_line, 
         detect_line_black_adaptive,
@@ -23,55 +23,50 @@ try:
     print("✅ Import thành công!")
 except ImportError as e:
     print(f"❌ Lỗi Import: {e}")
-    print("Hãy chắc chắn bạn đã copy file lane_detector_optimized.py vào thư mục perception/")
     sys.exit(1)
 
 
 # ============================================================
-# BƯỚC 1: CALIBRATION (Chạy 1 lần đầu tiên)
+# BƯỚC 1: CALIBRATION
 # ============================================================
 def run_calibration(test_file='test_full_hd.jpg'):
     """
-    Chạy calibration để xác định LANE_WIDTH_PIXELS
+    Calibration - Đo 38cm = ? pixels
+    Quan trọng: PHẢI chạy trước khi test!
     """
     print("\n" + "="*70)
-    print("BƯỚC 1: CALIBRATION - Đo độ rộng lane thành pixels")
+    print("🔧 BƯỚC 1: CALIBRATION - Đo độ rộng lane")
     print("="*70)
     
     if not os.path.exists(test_file):
-        print(f"❌ Không tìm thấy file: {test_file}")
+        print(f"❌ Không tìm thấy: {test_file}")
+        print(f"💡 Hãy chụp ảnh test bằng capture.py trước!")
         return None
     
     frame = cv2.imread(test_file)
     if frame is None:
-        print(f"❌ Không đọc được ảnh: {test_file}")
+        print(f"❌ Không đọc được: {test_file}")
         return None
     
-    # Resize về 640x480 (chuẩn của robot)
-    frame = cv2.resize(frame, (640, 480))
+    print(f"📸 Ảnh gốc: {frame.shape[1]}x{frame.shape[0]}")
+    print(f"🔄 Sẽ tự động resize về 640x480 để xử lý...")
     
-    print("\n📸 Đang phân tích ảnh để tìm lane width...")
-    lane_width_px = calibrate_lane_width(frame, show_result=True)
-    
-    if lane_width_px:
-        print(f"\n✅ KẾT QUẢ CALIBRATION:")
-        print(f"   Thêm dòng này vào lane_detector_optimized.py:")
-        print(f"   LANE_WIDTH_PIXELS = {lane_width_px}")
-        print(f"\n   Hoặc cập nhật trong config YAML:")
-        print(f"   lane_width_pixels: {lane_width_px}")
+    # Hàm calibrate_lane_width() sẽ tự động resize
+    lane_width_px = calibrate_lane_width(frame, show_result=False)
     
     return lane_width_px
 
 
 # ============================================================
-# BƯỚC 2: TEST CẢ 2 PHƯƠNG PHÁP
+# BƯỚC 2: TEST ẢNH TĨNH - SO SÁNH 2 PHƯƠNG PHÁP
 # ============================================================
 def run_tests(test_files, lane_config=None):
     """
-    Test cả 2 phương pháp: Hough Transform và Adaptive Threshold
+    Test 2 phương pháp: Hough Transform vs Adaptive Threshold
+    Kết quả lưu ra file ảnh debug_*.jpg
     """
     print("\n" + "="*70)
-    print("BƯỚC 2: SO SÁNH 2 PHƯƠNG PHÁP LANE DETECTION")
+    print("🧪 BƯỚC 2: TEST ẢNH TĨNH - So sánh 2 phương pháp")
     print("="*70)
     print(f"{'FILENAME':<25} | {'METHOD':<20} | {'ERROR':<8} | {'ACTION'}")
     print("-" * 70)
@@ -86,152 +81,230 @@ def run_tests(test_files, lane_config=None):
             print(f"{filename:<25} | ❌ Lỗi đọc file")
             continue
         
-
+        print(f"\n📸 Đọc ảnh: {filename} ({frame.shape[1]}x{frame.shape[0]})")
         
         # ====================================================
         # METHOD 1: Hough Transform (Phương pháp chính)
         # ====================================================
-        error_hough, x_line_hough, center_x, debug_hough = detect_line(frame, config=lane_config)
-        
-        if error_hough > 20:
-            action_hough = "Rẽ PHẢI  (->)"
-        elif error_hough < -20:
-            action_hough = "Rẽ TRÁI  (<-)"
-        else:
-            action_hough = "Đi THẲNG (^)"
-        
-        print(f"{filename:<25} | {'Hough Transform':<20} | {error_hough:<8} | {action_hough}")
-        
-        # Lưu ảnh debug
-        cv2.imwrite(f"debug_hough_{filename}", debug_hough)
+        try:
+            error_hough, x_line_hough, center_x, debug_hough = detect_line(frame, config=lane_config)
+            
+            if error_hough > 20:
+                action_hough = "Rẽ PHẢI  (->)"
+            elif error_hough < -20:
+                action_hough = "Rẽ TRÁI  (<-)"
+            else:
+                action_hough = "Đi THẲNG (^)"
+            
+            print(f"{filename:<25} | {'Hough Transform':<20} | {error_hough:<8} | {action_hough}")
+            
+            # Lưu ảnh debug
+            out_file = f"debug_hough_{filename}"
+            cv2.imwrite(out_file, debug_hough)
+            print(f"  💾 Đã lưu: {out_file}")
+            
+        except Exception as e:
+            print(f"{filename:<25} | ❌ Hough Error: {e}")
         
         # ====================================================
-        # METHOD 2: Adaptive Threshold (Phương pháp dự phòng)
+        # METHOD 2: Adaptive Threshold
         # ====================================================
-        error_adaptive, x_line_adaptive, _, debug_adaptive = detect_line_black_adaptive(frame)
-        
-        if error_adaptive > 20:
-            action_adaptive = "Rẽ PHẢI  (->)"
-        elif error_adaptive < -20:
-            action_adaptive = "Rẽ TRÁI  (<-)"
-        else:
-            action_adaptive = "Đi THẲNG (^)"
-        
-        print(f"{'':<25} | {'Adaptive Threshold':<20} | {error_adaptive:<8} | {action_adaptive}")
-        
-        # Lưu ảnh debug
-        cv2.imwrite(f"debug_adaptive_{filename}", debug_adaptive)
-        
-        # So sánh kết quả
-        diff = abs(error_hough - error_adaptive)
-        if diff > 50:
-            print(f"{'':<25} | ⚠️  Chênh lệch lớn giữa 2 phương pháp: {diff}px")
+        try:
+            error_adaptive, x_line_adaptive, _, debug_adaptive = detect_line_black_adaptive(frame)
+            
+            if error_adaptive > 20:
+                action_adaptive = "Rẽ PHẢI  (->)"
+            elif error_adaptive < -20:
+                action_adaptive = "Rẽ TRÁI  (<-)"
+            else:
+                action_adaptive = "Đi THẲNG (^)"
+            
+            print(f"{'':<25} | {'Adaptive Threshold':<20} | {error_adaptive:<8} | {action_adaptive}")
+            
+            # Lưu ảnh debug
+            out_file = f"debug_adaptive_{filename}"
+            cv2.imwrite(out_file, debug_adaptive)
+            print(f"  💾 Đã lưu: {out_file}")
+            
+            # So sánh 2 phương pháp
+            diff = abs(error_hough - error_adaptive)
+            if diff > 50:
+                print(f"  ⚠️  Chênh lệch lớn: {diff}px")
+            else:
+                print(f"  ✅ Chênh lệch chấp nhận được: {diff}px")
+                
+        except Exception as e:
+            print(f"{'':<25} | ❌ Adaptive Error: {e}")
         
         print("-" * 70)
 
 
 # ============================================================
-# BƯỚC 3: TEST REAL-TIME (Nếu có camera)
+# BƯỚC 3: TEST REAL-TIME (Không dùng cv2.imshow)
 # ============================================================
-def test_realtime_camera():
+def test_realtime_camera(num_frames=50):
     """
-    Test với camera thực (Picamera2)
+    Test real-time với Picamera2
+    Lưu mỗi 10 frames một lần để kiểm tra
+    KHÔNG dùng cv2.imshow() (không có màn hình)
     """
     try:
         from picamera2 import Picamera2
         import time
         
         print("\n" + "="*70)
-        print("BƯỚC 3: TEST REAL-TIME VỚI CAMERA")
+        print("🎥 BƯỚC 3: TEST REAL-TIME VỚI CAMERA")
         print("="*70)
-        print("Nhấn 'q' để thoát | 'c' để chụp ảnh test | 's' để chuyển phương pháp")
+        print(f"Sẽ chạy {num_frames} frames và lưu mỗi 10 frames")
+        print("Không hiển thị (cv2.imshow) vì không có màn hình ngoài")
         
         picam2 = Picamera2()
+        
+        # Cấu hình camera 1640x1232 (Full FOV)
         config = picam2.create_preview_configuration(
             main={"size": (1640, 1232), "format": "RGB888"}
         )
         picam2.configure(config)
         picam2.start()
         
-        time.sleep(2)  # Warm-up
+        print("⏳ Warm-up camera 2 giây...")
+        time.sleep(2)
         
-        method = 'hough'  # 'hough' hoặc 'adaptive'
+        method = 'hough'  # Có thể đổi thành 'adaptive'
         frame_count = 0
         
-        # ... (đoạn code phía trên giữ nguyên)
-
-        while True:
-            # Capture frame
+        print(f"\n🚀 Bắt đầu xử lý {num_frames} frames...")
+        
+        while frame_count < num_frames:
+            # Capture frame (RGB)
             frame_rgb = picam2.capture_array()
+            
+            # Chuyển sang BGR (OpenCV format)
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-            frame_bgr = cv2.resize(frame_bgr, (640, 480))
-            # Detect lane
+            
+            # Detect lane (hàm sẽ tự động resize về 640x480)
             if method == 'hough':
                 error, x_line, center_x, debug_frame = detect_line(frame_bgr)
-                # ... (giữ nguyên phần putText)
             else:
                 error, x_line, center_x, debug_frame = detect_line_black_adaptive(frame_bgr)
-                # ... (giữ nguyên phần putText)
             
-            # --- PHẦN SỬA ĐỔI: TẮT HIỂN THỊ, CHUYỂN SANG LƯU FILE ---
+            # In progress
+            print(f"\rFrame {frame_count+1}/{num_frames} | Error: {error:+4d}px", end="", flush=True)
             
-            # 1. Tắt hiển thị (Gây lỗi)
-            # cv2.imshow("Lane Detection - Real-time", debug_frame)
-            
-            # 2. Tắt chờ phím (Vì không có cửa sổ để focus)
-            # key = cv2.waitKey(1) & 0xFF
-            
-            # 3. Thay thế bằng logic lưu ảnh tự động
-            print(f"\rProcessing Frame: {frame_count} | Error: {error}", end="")
-            
-            # Lưu ảnh mỗi 10 frame một lần để kiểm tra (tránh lưu quá nhiều)
+            # Lưu mỗi 10 frames
             if frame_count % 10 == 0:
-                filename = f"debug_stream_{frame_count}.jpg"
+                filename = f"realtime_frame_{frame_count:03d}.jpg"
                 cv2.imwrite(filename, debug_frame)
-                
-            # Tự động dừng sau 50 frame (để bạn không phải kẹt trong vòng lặp)
-            if frame_count >= 50:
-                print("\n✅ Đã chạy xong 50 frames test. Dừng lại.")
-                break
-            
-            # Giả lập delay nhỏ để không chiếm hết CPU
-            time.sleep(0.05)
             
             frame_count += 1
+            
+            # Delay nhỏ để không chiếm CPU
+            time.sleep(0.05)
         
-        picam2.stop()
-        # ... (phần còn lại giữ nguyên)
+        print("\n")
         picam2.stop()
         picam2.close()
-        cv2.destroyAllWindows()
         
-        print(f"✅ Đã test {frame_count} frames")
+        print(f"✅ Đã xử lý {frame_count} frames")
+        print(f"📸 Đã lưu {frame_count // 10} ảnh debug: realtime_frame_*.jpg")
         
     except ImportError:
-        print("⚠️  Không tìm thấy Picamera2. Bỏ qua test real-time.")
+        print("❌ Không tìm thấy Picamera2. Bỏ qua test real-time.")
     except Exception as e:
         print(f"❌ Lỗi: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 # ============================================================
-# MAIN EXECUTION
+# DIAGNOSTIC: Kiểm tra nhanh 1 ảnh
+# ============================================================
+def quick_diagnostic(image_path):
+    """
+    Chẩn đoán nhanh 1 ảnh để tìm lỗi
+    """
+    print("\n" + "="*70)
+    print("🔍 CHẨN ĐOÁN NHANH")
+    print("="*70)
+    
+    if not os.path.exists(image_path):
+        print(f"❌ Không tìm thấy: {image_path}")
+        return
+    
+    frame = cv2.imread(image_path)
+    if frame is None:
+        print(f"❌ Không đọc được: {image_path}")
+        return
+    
+    print(f"📸 Ảnh: {image_path}")
+    print(f"   Kích thước gốc: {frame.shape[1]}x{frame.shape[0]}")
+    
+    # Resize về 640x480
+    if frame.shape[1] != 640:
+        frame_resized = cv2.resize(frame, (640, 480))
+        print(f"   Đã resize về: 640x480")
+    else:
+        frame_resized = frame
+    
+    # Chuyển grayscale và đảo màu
+    gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+    gray_inv = cv2.bitwise_not(gray)
+    
+    # Lưu các bước xử lý
+    cv2.imwrite("diag_1_original.jpg", frame_resized)
+    cv2.imwrite("diag_2_gray.jpg", gray)
+    cv2.imwrite("diag_3_inverted.jpg", gray_inv)
+    
+    # Canny
+    edges = cv2.Canny(gray_inv, 40, 120)
+    cv2.imwrite("diag_4_edges.jpg", edges)
+    
+    # Hough Lines
+    lines = cv2.HoughLinesP(edges, 1, np.pi/180, 20, minLineLength=30, maxLineGap=20)
+    
+    if lines is not None:
+        print(f"   ✅ Tìm thấy {len(lines)} đường thẳng")
+        
+        # Vẽ tất cả lines
+        lines_img = frame_resized.copy()
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cv2.line(lines_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        cv2.imwrite("diag_5_lines.jpg", lines_img)
+        print(f"   📸 Đã lưu: diag_*.jpg (5 files)")
+    else:
+        print(f"   ❌ KHÔNG tìm thấy đường thẳng nào!")
+        print(f"   💡 Nguyên nhân có thể:")
+        print(f"      - Vạch đen quá mờ")
+        print(f"      - Ánh sáng quá yếu/chói")
+        print(f"      - Vạch không nằm trong ROI")
+        print(f"      - Tham số Canny/Hough quá cao")
+    
+    print("="*70)
+
+
+# ============================================================
+# MAIN
 # ============================================================
 if __name__ == "__main__":
     print("\n" + "="*70)
-    print("CHƯƠNG TRÌNH TEST LANE DETECTION - PHIÊN BẢN TỐI ƯU")
-    print("Tối ưu cho: Vạch ĐEN trên nền SÁNG | Lane 38cm | Camera 640x480")
+    print("🚗 CHƯƠNG TRÌNH TEST LANE DETECTION (No Display Version)")
+    print("   Tối ưu cho: Vạch ĐEN trên nền TRẮNG (bìa trắng)")
+    print("   Resolution: 1640x1232 → Auto resize 640x480")
+    print("   Không dùng cv2.imshow() (không có màn hình ngoài)")
     print("="*70)
     
     # Load config
     try:
         config_full = load_config('config/hardware_config.yaml')
         lane_config = config_full.get('ai', {}).get('lane_detection', {})
-        print("✅ Đã tải config từ hardware_config.yaml")
+        print("✅ Đã tải config")
     except:
-        print("⚠️  Sử dụng config mặc định")
+        print("⚠️  Dùng config mặc định")
         lane_config = None
     
-    # Danh sách ảnh test
+    # Test files
     test_files = [
         'test_full_hd.jpg',
         'road_curve_left.jpg', 
@@ -239,46 +312,62 @@ if __name__ == "__main__":
     ]
     
     # Menu
-    print("\nChọn chế độ test:")
-    print("  1. CALIBRATION - Đo độ rộng lane (Chạy 1 lần đầu)")
-    print("  2. TEST ẢNH TĨNH - So sánh 2 phương pháp")
-    print("  3. TEST REAL-TIME - Camera thực (Picamera2)")
+    print("\n📋 Chọn chế độ test:")
+    print("  1. CALIBRATION - Đo lane width (⚠️ BẮT BUỘC chạy trước!)")
+    print("  2. TEST ẢNH TĨNH - So sánh Hough vs Adaptive")
+    print("  3. TEST REAL-TIME - Camera (Lưu ảnh, không hiển thị)")
     print("  4. TẤT CẢ (Khuyến nghị)")
+    print("  5. CHẨN ĐOÁN NHANH - Kiểm tra 1 ảnh chi tiết")
     
-    choice = input("\nNhập lựa chọn (1-4): ").strip()
+    choice = input("\n👉 Nhập lựa chọn (1-5): ").strip()
     
     if choice == '1':
+        # CALIBRATION
         run_calibration('test_full_hd.jpg')
     
     elif choice == '2':
+        # TEST ẢNH TĨNH
         run_tests(test_files, lane_config)
-        print("\n✅ Hoàn tất! Kiểm tra các file 'debug_*.jpg'")
+        print("\n✅ Hoàn tất! Kiểm tra file debug_*.jpg")
     
     elif choice == '3':
-        test_realtime_camera()
+        # TEST REAL-TIME
+        num_frames = int(input("Số frames cần test (mặc định 50): ") or "50")
+        test_realtime_camera(num_frames)
     
     elif choice == '4':
-        # Chạy tất cả
-        print("\n🚀 Chạy đầy đủ quy trình...\n")
+        # TẤT CẢ
+        print("\n🚀 Chạy quy trình đầy đủ...\n")
         
         # Step 1: Calibration
         lane_width_px = run_calibration('test_full_hd.jpg')
         
-        input("\nNhấn Enter để tiếp tục test ảnh tĩnh...")
+        if lane_width_px:
+            input("\n✅ Calibration xong. Nhấn Enter tiếp tục...")
+        else:
+            print("⚠️  Calibration thất bại, nhưng vẫn tiếp tục test...")
         
-        # Step 2: Test static images
+        # Step 2: Test ảnh tĩnh
         run_tests(test_files, lane_config)
         
-        print("\n✅ Đã hoàn thành test ảnh tĩnh!")
+        print("\n✅ Test ảnh tĩnh xong!")
         
-        # Step 3: Ask for real-time test
-        do_realtime = input("\nBạn có muốn test real-time với camera không? (y/n): ")
+        # Step 3: Test real-time
+        do_realtime = input("\nTest real-time với camera? (y/n): ")
         if do_realtime.lower() == 'y':
-            test_realtime_camera()
+            num_frames = int(input("Số frames (mặc định 50): ") or "50")
+            test_realtime_camera(num_frames)
+    
+    elif choice == '5':
+        # CHẨN ĐOÁN
+        image = input("Nhập tên file ảnh (mặc định test_full_hd.jpg): ").strip()
+        if not image:
+            image = 'test_full_hd.jpg'
+        quick_diagnostic(image)
     
     else:
         print("❌ Lựa chọn không hợp lệ!")
     
     print("\n" + "="*70)
-    print("KẾT THÚC CHƯƠNG TRÌNH")
+    print("✅ KẾT THÚC")
     print("="*70)
