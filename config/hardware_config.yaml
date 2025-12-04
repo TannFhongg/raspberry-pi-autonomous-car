@@ -1,207 +1,491 @@
+# ============================================================================
+# Hardware Configuration for Raspberry Pi 5 + Arduino Uno
+# Autonomous Car - Lane Detection System
+# OPTIMIZED for: Black lines on white background (bìa trắng)
+# Camera: Raspberry Pi Camera Module 2 (1640x1232 → Auto resize 640x480)
+# Date: 2024-12-03
+# ============================================================================
 
 # Control Mode: 'arduino' or 'direct'
 control_mode: 'arduino'
 
-# Arduino Configuration
+# ============================================================================
+# ARDUINO CONFIGURATION
+# ============================================================================
 arduino:
-  port: '/dev/ttyACM0'  # Arduino Uno port
+  port: '/dev/ttyACM0'  # Arduino Uno port (check with: ls /dev/ttyACM*)
   baudrate: 115200
   timeout: 1.0
   reconnect_interval: 5.0
   
   # Arduino Uno pin mapping
   pins:
-    # Motor pins
-    left_motor_pwm: 9      # ENA - PWM
+    # Motor pins (L298N Driver)
+    left_motor_pwm: 9      # ENA - PWM (Speed control)
     left_motor_in1: 2      # IN1 - Direction
     left_motor_in2: 3      # IN2 - Direction
-    right_motor_pwm: 10    # ENB - PWM
+    right_motor_pwm: 10    # ENB - PWM (Speed control)
     right_motor_in3: 4     # IN3 - Direction
     right_motor_in4: 5     # IN4 - Direction
     
     # Sensor pins
-    ultrasonic_trig: 12
-    ultrasonic_echo: 11
-    # NO LINE SENSORS - Camera only
+    ultrasonic_trig: 12    # HC-SR04 Trigger
+    ultrasonic_echo: 11    # HC-SR04 Echo
+    # NO LINE SENSORS - Camera-based lane detection only
 
-# Motor Driver Configuration (backup - not used when Arduino controls)
-motor_driver:
-  type: "L298N"
-  left_motor:
-    enable_pin: 18
-    input1_pin: 23
-    input2_pin: 24
-    max_speed: 255
-    min_speed: 0
-    reverse: false
-  right_motor:
-    enable_pin: 13
-    input1_pin: 27
-    input2_pin: 22
-    max_speed: 255
-    min_speed: 0
-    reverse: false
 
 # PWM Configuration
 pwm:
-  frequency: 1000  # Hz
+  frequency: 1000          # Hz (1kHz standard for L298N)
 
-# Robot Physical Parameters
+# ============================================================================
+# ROBOT PHYSICAL PARAMETERS
+# ============================================================================
 robot:
   wheel_diameter: 0.065    # meters (65mm)
-  wheel_base: 0.15         # meters (150mm)
-  max_speed: 0.5           # m/s
-  max_angular_speed: 1.0   # rad/s
+  wheel_base: 0.15         # meters (150mm - distance between left/right wheels)
+  max_speed: 0.5           # m/s (maximum forward speed)
+  max_angular_speed: 1.0   # rad/s (maximum turning speed)
+  
+  # Lane dimensions (for reference)
+  lane_width: 0.38         # meters (38cm - actual competition track width)
+  robot_width: 0.15        # meters (15cm - robot chassis width)
 
-# Safety Limits
+# ============================================================================
+# SAFETY LIMITS
+# ============================================================================
 safety:
-  emergency_stop_distance: 0.2  # meters (20cm)
-  max_acceleration: 2.0         # m/s²
-  timeout: 5.0                  # seconds
-  min_safe_distance: 15.0       # cm
+  emergency_stop_distance: 0.2   # meters (20cm - ultrasonic trigger distance)
+  max_acceleration: 2.0          # m/s² (prevent wheel slippage)
+  timeout: 5.0                   # seconds (watchdog timeout)
+  min_safe_distance: 15.0        # cm (minimum obstacle distance)
+  
+  # Lane loss handling
+  max_lane_lost_frames: 15       # Stop after losing lane for 15 frames (~0.5s at 30fps)
+  recovery_mode: 'stop'          # 'stop', 'slow', or 'continue'
 
-# Sensor Configuration
+# ============================================================================
+# SENSOR CONFIGURATION
+# ============================================================================
 sensors:
-  # HC-SR04 Ultrasonic (Obstacle Detection)
+  # HC-SR04 Ultrasonic Sensor (Obstacle Detection)
   ultrasonic:
     enabled: true
-    max_distance: 400.0   # cm
-    min_distance: 2.0     # cm
-    update_rate: 10       # Hz
+    max_distance: 400.0          # cm (sensor maximum range)
+    min_distance: 2.0            # cm (sensor minimum range)
+    update_rate: 10              # Hz (10 readings per second)
+    timeout: 0.1                 # seconds (reading timeout)
   
-  # NO IR LINE SENSORS (Camera only)
-  line_sensors:
-    enabled: false
-    count: 0
-    pins: []
   
-  # Raspberry Pi Camera (PRIMARY - Lane Detection)
+  # ============================================================================
+  # RASPBERRY PI CAMERA MODULE 2 (PRIMARY SENSOR)
+  # ============================================================================
   camera:
     enabled: true
     backend: 'picamera2'
-    resolution: [1640, 1232]   # <--- ĐÃ SỬA: GÓC RỘNG (Full FOV)
-    framerate: 30
-    device: 0
+    
+    # Resolution Settings
+    # Native: 1640x1232 (Full FOV) → Auto-resized to 640x480 for processing
+    # Why 1640x1232? Wider field of view to see both lane lines
+    # Why resize to 640x480? Faster processing, optimized parameters
+    resolution: [1640, 1232]
+    framerate: 30                # Target FPS (will be auto-adjusted)
+    device: 0                    # Camera index (0 = first camera)
     
     # Picamera2 specific settings
     picamera2:
-      format: 'RGB888'
-      buffer_count: 4
+      format: 'RGB888'           # Color format (RGB888 = 24-bit color)
+      buffer_count: 4            # Number of frame buffers (higher = smoother)
       
-      # Camera controls (Tối ưu cho vạch đen nền trắng)
+      # Camera Controls - OPTIMIZED for BLACK LINES on WHITE BACKGROUND
       controls:
-        FrameRate: 30
-        ExposureTime: null
-        AnalogueGain: 1.0
-        Brightness: 0.0
-        Contrast: 1.2          # Tăng tương phản
-        Saturation: 0.8        # Giảm bão hòa màu
-        Sharpness: 1.2         # Tăng độ nét cạnh
+        FrameRate: 30            # Target frame rate
+        ExposureTime: null       # Auto exposure (null = auto, or set microseconds)
+        AnalogueGain: 1.0        # ISO sensitivity (1.0 = normal, increase if dark)
+        
+        # Image Quality - Tuned for lane detection
+        Brightness: 0.0          # Brightness adjustment (-1.0 to 1.0)
+        Contrast: 1.3            # INCREASED from 1.2 → 1.3 (make black lines stand out)
+        Saturation: 0.7          # DECREASED from 0.8 → 0.7 (reduce color noise)
+        Sharpness: 1.3           # INCREASED from 1.2 → 1.3 (sharper edges)
+        
+        # Auto White Balance
+        AwbEnable: true          # Enable auto white balance
+        AwbMode: 'auto'          # AWB mode (auto, tungsten, fluorescent, etc.)
+      
+      # Advanced settings
+      auto_focus: false          # Camera V2 has fixed focus
+      lens_position: null        # Only for Camera V3 with autofocus
 
-# AI/Computer Vision Settings
+# ============================================================================
+# AI/COMPUTER VISION SETTINGS
+# ============================================================================
 ai:
-  # Lane Detection (Camera-based) - OPTIMIZED FOR BLACK LINES
+  # ============================================================================
+  # LANE DETECTION - OPTIMIZED FOR BLACK LINES ON WHITE BACKGROUND
+  # ============================================================================
   lane_detection:
     enabled: true
-    method: 'opencv'
+    method: 'opencv'             # 'opencv' (Hough), 'adaptive', or 'hybrid'
     
-    # Physical parameters
-    lane_width_cm: 38
-    robot_width_cm: 15
-    lane_width_pixels: 300  # Đã ước tính cho độ phân giải 1640x1232 (resize về 640)
+    # Physical Parameters
+    lane_width_cm: 38            # Real lane width in cm
+    robot_width_cm: 15           # Real robot width in cm
     
-    # OpenCV settings - TUNED FOR BLACK LINES
-    roi_top_ratio: 0.4
-    roi_bottom_ratio: 1.0
+    # CRITICAL: Lane width in pixels at 640x480 resolution
+    # ⚠️ MUST BE CALIBRATED using test_lane_optimized.py (Option 1)
+    # Default value is estimated, actual value depends on camera height/angle
+    lane_width_pixels: 240       # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
     
-    canny_low: 30
-    canny_high: 100
+    # Region of Interest (ROI) - Trapezoid shape
+    # Lower ratio = look closer to robot (better for sharp turns)
+    # Higher ratio = look farther ahead (better for straight lines)
+    roi_top_ratio: 0.35          # Start at 35% from top (65% from bottom)
+    roi_bottom_ratio: 1.0        # End at 100% (bottom of image)
+    roi_left_ratio: 0.30         # Left boundary at 30% (wider view)
+    roi_right_ratio: 0.70        # Right boundary at 70% (wider view)
     
-    hough_threshold: 15
-    min_line_length: 25
-    max_line_gap: 15
+    # ============================================================================
+    # CANNY EDGE DETECTION - Tuned for white background + black lines
+    # ============================================================================
+    canny_low: 40                # OPTIMIZED: Lower threshold (higher = less sensitive)
+    canny_high: 120              # OPTIMIZED: Upper threshold
+    # NOTE: For darker/noisier conditions, decrease both values by 10
     
-    blur_kernel: 7
-    use_clahe: true
-    invert_grayscale: true  # Đảo màu để tìm vạch đen
+    # ============================================================================
+    # HOUGH TRANSFORM - Line detection parameters
+    # ============================================================================
+    hough_threshold: 20          # Minimum votes to detect line (lower = more sensitive)
+    min_line_length: 30          # Minimum line length in pixels
+    max_line_gap: 20             # Maximum gap between line segments to connect
     
-    min_slope: 0.4
-    smoothing_factor: 0.7
-    confidence_threshold: 0.6
+    # Fine-tuning guide:
+    # - NO LANE DETECTED? Decrease hough_threshold (20 → 15 → 10)
+    # - TOO MANY FALSE LINES? Increase hough_threshold (20 → 25 → 30)
+    # - BROKEN LINES? Increase max_line_gap (20 → 30 → 40)
+    # - SHORT SEGMENTS? Decrease min_line_length (30 → 25 → 20)
     
-    lane_lost_threshold: 10
-    lane_lost_action: 'stop'
+    # ============================================================================
+    # IMAGE PREPROCESSING
+    # ============================================================================
+    blur_kernel: 5               # Gaussian blur kernel size (must be odd: 3, 5, 7)
+    use_clahe: true              # Use CLAHE for contrast enhancement
+    clahe_clip_limit: 1.5        # CLAHE clip limit (1.0-3.0, lower = subtle)
+    clahe_tile_size: 8           # CLAHE tile grid size (8x8 default)
+    invert_grayscale: true       # Invert to make black lines white (CRITICAL!)
     
-    # Adaptive Threshold (Fallback)
+    # ============================================================================
+    # LINE FILTERING
+    # ============================================================================
+    min_slope: 0.5               # Minimum absolute slope to accept (filter horizontal lines)
+    max_slope: 10.0              # Maximum absolute slope (filter near-vertical lines)
+    
+    # Slope classification:
+    # - Left lane: slope < -0.5, located left of center
+    # - Right lane: slope > 0.5, located right of center
+    
+    # ============================================================================
+    # LANE TRACKING & STABILITY
+    # ============================================================================
+    smoothing_factor: 0.7        # Exponential smoothing (0=no smooth, 1=max smooth)
+    confidence_threshold: 0.6    # Minimum confidence to trust detection
+    use_kalman_filter: false     # Use Kalman filter for smoother tracking
+    
+    # Lane loss handling
+    lane_lost_threshold: 10      # Frames before considering lane lost
+    lane_lost_action: 'stop'     # Action when lane lost: 'stop', 'slow', 'continue'
+    
+    # ============================================================================
+    # ADAPTIVE THRESHOLD METHOD (Fallback/Alternative)
+    # ============================================================================
     adaptive:
-      enabled: true
-      block_size: 15
-      c_value: 5
-      min_contour_area: 100
-      use_when_hough_fails: true
+      enabled: true              # Enable as fallback when Hough fails
+      method: 'gaussian'         # 'gaussian' or 'mean'
+      block_size: 21             # Size of pixel neighborhood (must be odd)
+      c_value: 8                 # Constant subtracted from mean
+      min_contour_area: 200      # Minimum contour area to consider (pixels²)
+      max_contour_area: 50000    # Maximum contour area (filter out large blobs)
+      use_when_hough_fails: true # Auto-switch to adaptive when Hough fails
+      
+      # Tuning guide:
+      # - LINES TOO THICK? Increase c_value (8 → 10 → 12)
+      # - LINES TOO THIN? Decrease c_value (8 → 6 → 4)
+      # - BROKEN LINES? Decrease min_contour_area (200 → 150 → 100)
+  
+  # ============================================================================
+  # OBJECT DETECTION (Optional - for Follow mode)
+  # ============================================================================
+  object_detection:
+    enabled: false               # Enable for object following mode
+    model: 'yolov5s'            # Model: 'yolov5s', 'yolov5n', 'yolov8n'
+    confidence_threshold: 0.5    # Minimum confidence to detect object
+    target_classes: [0]          # Class IDs to detect (0 = person)
+    
+  # ============================================================================
+  # COLOR TRACKING (Optional - for colored object following)
+  # ============================================================================
+  color_tracking:
+    enabled: false               # Enable for color-based following
+    target_color: 'red'          # Target color to follow
+    
+    # HSV color ranges
+    colors:
+      red:
+        lower_hsv: [0, 100, 100]
+        upper_hsv: [10, 255, 255]
+      green:
+        lower_hsv: [40, 50, 50]
+        upper_hsv: [80, 255, 255]
+      blue:
+        lower_hsv: [100, 50, 50]
+        upper_hsv: [130, 255, 255]
+      yellow:
+        lower_hsv: [20, 100, 100]
+        upper_hsv: [30, 255, 255]
 
-# Lane Following Settings (PID-based)
+# ============================================================================
+# LANE FOLLOWING CONTROL (PID-based)
+# ============================================================================
 lane_following:
   enabled: true
   
-  # PID Controller parameters
+  # ============================================================================
+  # PID CONTROLLER PARAMETERS
+  # ============================================================================
+  # Tuning Guide:
+  # 1. Start with Kp only (Ki=0, Kd=0)
+  # 2. Increase Kp until oscillation starts
+  # 3. Add Kd to dampen oscillation
+  # 4. Add small Ki only if steady-state error exists
+  
   pid:
-    kp: 1.0
-    ki: 0.02
-    kd: 0.4
-    max_output: 255
-    min_output: -255
-    derivative_smoothing: 0.7
-    integral_limit: 100
+    # Proportional Gain (Response strength)
+    kp: 1.0                      # BASELINE: Good for most conditions
+    # Effect: Higher = faster response, more aggressive steering
+    # Too high: Oscillation, overshooting
+    # Too low: Slow response, can't handle sharp turns
+    
+    # Integral Gain (Steady-state error correction)
+    ki: 0.02                     # SMALL VALUE: Correct cumulative error
+    # Effect: Eliminates persistent offset over time
+    # Too high: Overshooting, instability
+    # Too low: Steady-state error remains
+    
+    # Derivative Gain (Damping, smoothness)
+    kd: 0.4                      # DAMPING: Reduce oscillation
+    # Effect: Predicts future error, smooths response
+    # Too high: Sluggish, can amplify noise
+    # Too low: Oscillation, jittery movement
+    
+    # Output Limits
+    max_output: 255              # Maximum steering correction (PWM value)
+    min_output: -255             # Minimum steering correction (negative = opposite)
+    
+    # Advanced Settings
+    derivative_smoothing: 0.7    # Smooth derivative term (0-1)
+    integral_limit: 100          # Anti-windup: max integral accumulation
+    integral_reset_threshold: 50 # Reset integral when error > threshold
   
-  # Speed settings
-  base_speed: 130
-  max_speed: 200
-  min_speed: 80
+  # ============================================================================
+  # SPEED CONTROL
+  # ============================================================================
+  # Dynamic speed adjustment based on error magnitude
+  base_speed: 180                # Base PWM speed (0-255)
+  max_speed: 255                 # Maximum speed on straight sections
+  min_speed: 130                  # Minimum speed during sharp turns
   
-  # Steering settings
-  max_steering_angle: 45
-  steering_sensitivity: 1.2
+  # Speed reduction rules
+  speed_reduction:
+    enabled: true
+    error_thresholds:
+      low: 20                    # Error < 20: Full speed
+      medium: 50                 # Error 20-50: Reduce to 80% speed
+      high: 80                   # Error 50-80: Reduce to 60% speed
+      critical: 100              # Error > 100: Reduce to 50% speed (min_speed)
+  
+  # Acceleration limits (prevent wheel slippage)
+  max_acceleration: 50           # Maximum PWM change per cycle
+  
+  # ============================================================================
+  # STEERING CONTROL
+  # ============================================================================
+  steering_mode: 'differential'  # 'differential' or 'ackermann'
+  max_steering_angle: 45         # Maximum steering angle (degrees, for reference)
+  steering_sensitivity: 1.2      # Steering multiplier (>1 = more aggressive)
+  
+  # Differential steering formula:
+  # left_speed = base_speed - (error * kp)
+  # right_speed = base_speed + (error * kp)
 
-# PID Tuning Presets
+# ============================================================================
+# PID TUNING PRESETS (Quick switching)
+# ============================================================================
 pid_presets:
-  conservative:
-    kp: 0.7
-    ki: 0.01
-    kd: 0.25
-  balanced:
-    kp: 1.0
-    ki: 0.02
-    kd: 0.4
-  aggressive:
-    kp: 1.5
-    ki: 0.03
-    kd: 0.6
+  # Ultra Safe - First run, testing
   ultra_safe:
     kp: 0.5
     ki: 0.0
     kd: 0.2
+    base_speed: 100
+    note: "Very slow, stable, good for initial testing"
+  
+  # Conservative - Smooth indoor tracks
+  conservative:
+    kp: 0.7
+    ki: 0.01
+    kd: 0.25
+    base_speed: 120
+    note: "Smooth motion, minimal oscillation"
+  
+  # Balanced - General purpose (RECOMMENDED)
+  balanced:
+    kp: 1.0
+    ki: 0.02
+    kd: 0.4
+    base_speed: 130
+    note: "Good balance of speed and stability"
+  
+  # Aggressive - Fast, sharp turns
+  aggressive:
+    kp: 1.5
+    ki: 0.03
+    kd: 0.6
+    base_speed: 150
+    note: "Fast response, handles sharp curves"
+  
+  # Competition - Maximum performance
+  competition:
+    kp: 1.8
+    ki: 0.05
+    kd: 0.8
+    base_speed: 180
+    note: "Optimized for competition tracks, requires tuning"
 
-# Logging
+# ============================================================================
+# FOLLOW MODE (Optional - for object/person following)
+# ============================================================================
+follow_mode:
+  enabled: false
+  target_distance: 50            # cm (desired distance to target)
+  min_distance: 20               # cm (stop distance)
+  max_distance: 100              # cm (search distance)
+  angle_tolerance: 0.1           # radians (centering tolerance)
+  speed_multiplier: 0.8          # Speed factor for follow mode
+  
+  # PID for distance control
+  pid:
+    kp: 0.6
+    ki: 0.0
+    kd: 0.2
+
+# ============================================================================
+# LOGGING & DEBUG
+# ============================================================================
 logging:
-  level: 'DEBUG'
+  level: 'INFO'                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
   file: 'data/logs/robot.log'
-  max_size: 10485760
-  backup_count: 5
-  log_lane_details: true
-  log_frequency: 10
-  save_debug_frames: false
+  max_size: 10485760             # 10MB per log file
+  backup_count: 5                # Keep 5 backup log files
+  
+  # Console output
+  console_output: true           # Print to terminal
+  colored_output: true           # Use colored terminal output
+  
+  # Lane detection logging
+  log_lane_details: true         # Log error, x_line, center_x
+  log_frequency: 30              # Log every N frames (reduce log size)
+  save_debug_frames: false       # Save annotated frames (WARNING: High disk usage!)
+  debug_frame_interval: 100      # Save every Nth frame if enabled
+  
+  # Performance logging
+  log_fps: true                  # Log frames per second
+  log_latency: true              # Log processing latency
 
-# Visual Odometry Settings
+# ============================================================================
+# VISUAL ODOMETRY (Optional - position estimation from camera)
+# ============================================================================
 visual_odometry:
-  enabled: true
-  scale_factor: 0.05
-  max_features: 200
-  quality_level: 0.01
-  min_distance: 10
-  window_size: 21
-  max_level: 3
-  use_ransac: true
-  ransac_threshold: 3.0
-  min_features: 50
-  redetect_interval: 30
+  enabled: false                 # Enable visual odometry
+  scale_factor: 0.05             # 1 pixel = 0.05 cm (REQUIRES CALIBRATION!)
+  
+  # Feature detection (Shi-Tomasi corners)
+  max_features: 200              # Maximum number of features to track
+  quality_level: 0.01            # Feature quality threshold
+  min_distance: 10               # Minimum distance between features
+  
+  # Optical Flow (Lucas-Kanade)
+  window_size: 21                # Search window size
+  max_level: 3                   # Pyramid levels
+  
+  # Outlier rejection (RANSAC)
+  use_ransac: true               # Use RANSAC for robust estimation
+  ransac_threshold: 3.0          # Inlier threshold (pixels)
+  
+  # Feature management
+  min_features: 50               # Re-detect when features < threshold
+  redetect_interval: 30          # Re-detect every N frames
+
+# ============================================================================
+# WEB DASHBOARD (Optional - remote monitoring)
+# ============================================================================
+dashboard:
+  enabled: false                 # Enable web dashboard
+  host: '0.0.0.0'               # Listen on all interfaces
+  port: 5000                     # Dashboard port
+  update_rate: 10                # Updates per second
+  stream_quality: 80             # JPEG quality (0-100)
+  
+  # Features
+  show_video_feed: true          # Stream camera feed
+  show_statistics: true          # Show error, speed, status
+  show_logs: true                # Show recent logs
+  remote_control: false          # Allow remote start/stop (DANGEROUS!)
+
+# ============================================================================
+# CALIBRATION DATA (Auto-populated by calibration script)
+# ============================================================================
+calibration:
+  camera:
+    lane_width_pixels: null      # Set by calibration script
+    scale_factor: null           # cm per pixel
+    calibration_date: null       # ISO datetime
+  
+  motor:
+    left_speed_factor: 1.0       # Compensation for motor differences
+    right_speed_factor: 1.0
+    calibration_date: null
+  
+  pid:
+    last_tuned: null             # Last PID tuning session
+    track_type: null             # Track type used for tuning
+
+# ============================================================================
+# COMPETITION SETTINGS (Quick enable/disable for competition)
+# ============================================================================
+competition_mode:
+  enabled: false
+  
+  # Overrides when enabled
+  overrides:
+    base_speed: 180
+    pid_preset: 'balanced'
+    logging_level: 'WARNING'     # Reduce logging overhead
+    save_debug_frames: false
+    dashboard_enabled: false
+  
+  # Emergency stop
+  emergency_stop_button_pin: 17  # GPIO pin for physical e-stop button
+  enable_watchdog: true          # Enable software watchdog
+
+# ============================================================================
+# NOTES & REMINDERS
+# ============================================================================
+# 1. ALWAYS run calibration before first use: python3 test_lane_optimized.py (Option 1)
+# 2. Update LANE_WIDTH_PIXELS in ai.lane_detection section after calibration
+# 3. Start with 'ultra_safe' PID preset for first test
+# 4. Gradually increase to 'balanced' then 'aggressive' as needed
+# 5. Fine-tune Canny/Hough parameters based on lighting conditions
+# 6. Test in actual competition environment before race day
+# 7. Keep backup of working config before making changes
+# 8. Monitor logs during testing: tail -f data/logs/robot.log
+# ============================================================================

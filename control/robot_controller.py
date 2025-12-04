@@ -571,7 +571,7 @@ class FollowModeController:
         self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
         
         # --- CẤU HÌNH CAMERA (Calibration) ---
-        self.FOCAL_LENGTH = 542  # Tiêu cự (đã tính ở bài trước)
+        self.FOCAL_LENGTH = 240  # Tiêu cự (đã tính ở bài trước)
         self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
         
         # Khởi tạo các ngưỡng khoảng cách mặc định (50cm)

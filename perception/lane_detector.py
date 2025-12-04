@@ -56,7 +56,7 @@ def detect_line(frame, config=None):
     # - Tại đáy ảnh (gần xe), 38cm lane ≈ 200-250 pixels
     # QUAN TRỌNG: Cần chạy calibration để lấy số chính xác!
     
-    LANE_WIDTH_PIXELS = 300  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
+    LANE_WIDTH_PIXELS = 240  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
     
     # Debug frame
     frame_debug = frame.copy()
@@ -265,7 +265,7 @@ def detect_line_black_adaptive(frame):
     
     height, width = frame.shape[:2]
     center_x = width // 2
-    LANE_WIDTH_PIXELS = 220  # Cùng giá trị với detect_line()
+    LANE_WIDTH_PIXELS = 240  # Cùng giá trị với detect_line()
     
     frame_debug = frame.copy()
     
