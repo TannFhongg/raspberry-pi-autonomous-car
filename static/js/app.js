@@ -31,6 +31,7 @@ socket.on('mode_update', function (data) {
         currentMode = data.mode;
         updateModeRadioButtons();
         updateControlsState();
+        updateFollowStatusVisibility(); // ✅ NEW: Hide/show follow status
     }
 });
 
@@ -108,23 +109,21 @@ function updateSensorData(data) {
     }
 }
 
-// ===== TARGET DATA UPDATE (NEW) =====
+// ===== TARGET DATA UPDATE (FIXED) =====
 function updateTargetData(data) {
-    // Show/hide target-related UI elements
+    // ✅ ONLY update if in follow mode
+    if (currentMode !== 'follow') {
+        return;
+    }
+
+    // Show target-related UI elements
     const targetDistanceItem = document.getElementById('targetDistanceItem');
     const trackingStatusItem = document.getElementById('trackingStatusItem');
     const confidenceItem = document.getElementById('confidenceItem');
 
-    if (currentMode === 'follow') {
-        targetDistanceItem.style.display = 'flex';
-        trackingStatusItem.style.display = 'flex';
-        confidenceItem.style.display = 'flex';
-    } else {
-        targetDistanceItem.style.display = 'none';
-        trackingStatusItem.style.display = 'none';
-        confidenceItem.style.display = 'none';
-        return;
-    }
+    targetDistanceItem.style.display = 'flex';
+    trackingStatusItem.style.display = 'flex';
+    confidenceItem.style.display = 'flex';
 
     // Update tracking status
     const trackingStatusValue = document.getElementById('trackingStatusValue');
@@ -176,7 +175,28 @@ function updateTargetData(data) {
         selectedColor.charAt(0).toUpperCase() + selectedColor.slice(1);
 }
 
-// ===== UPDATE TARGET OVERLAY (NEW) =====
+// ===== NEW: UPDATE FOLLOW STATUS VISIBILITY =====
+function updateFollowStatusVisibility() {
+    const targetDistanceItem = document.getElementById('targetDistanceItem');
+    const trackingStatusItem = document.getElementById('trackingStatusItem');
+    const confidenceItem = document.getElementById('confidenceItem');
+    const targetOverlay = document.getElementById('targetOverlay');
+
+    if (currentMode === 'follow') {
+        // Show follow-related status
+        targetDistanceItem.style.display = 'flex';
+        trackingStatusItem.style.display = 'flex';
+        confidenceItem.style.display = 'flex';
+    } else {
+        // ✅ Hide follow-related status when NOT in follow mode
+        targetDistanceItem.style.display = 'none';
+        trackingStatusItem.style.display = 'none';
+        confidenceItem.style.display = 'none';
+        targetOverlay.style.display = 'none'; // Hide target box overlay
+    }
+}
+
+// ===== UPDATE TARGET OVERLAY =====
 function updateTargetOverlay(x, y, w, h, tracking) {
     const overlay = document.getElementById('targetOverlay');
     const targetBox = document.getElementById('targetBox');
@@ -203,6 +223,7 @@ function getStateColor(state) {
     const colors = {
         'IDLE': '#9e9e9e',
         'FOLLOWING LINE': '#4caf50',
+        'FOLLOWING LANE': '#4caf50',
         'FOLLOWING TARGET': '#2196f3',
         'OBSTACLE DETECTED': '#ff9800',
         'STOPPED': '#f44336',
@@ -212,7 +233,13 @@ function getStateColor(state) {
         'TURNING LEFT': '#2196f3',
         'TURNING RIGHT': '#2196f3',
         'AUTO MODE': '#9c27b0',
-        'EMERGENCY STOP': '#f44336'
+        'FOLLOW MODE': '#2196f3',
+        'EMERGENCY STOP': '#f44336',
+        'LANE LOST': '#f44336',
+        'SEARCHING LANE': '#ff9800',
+        'SCANNING LEFT': '#2196f3',
+        'SCANNING RIGHT': '#2196f3',
+        'RECOVERY FAILED': '#f44336'
     };
     return colors[state] || '#4caf50';
 }
@@ -277,7 +304,7 @@ function emergencyStop() {
     }
 }
 
-// ===== MODE TOGGLE =====
+// ===== MODE TOGGLE (FIXED) =====
 function toggleMode() {
     const modeManual = document.getElementById('modeManual');
     const modeAuto = document.getElementById('modeAuto');
@@ -299,6 +326,7 @@ function toggleMode() {
             addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Mode changed to: ' + currentMode.toUpperCase());
             updateControlsState();
+            updateFollowStatusVisibility(); // ✅ Update visibility immediately
         })
         .catch(error => {
             console.error('Error changing mode:', error);
@@ -343,7 +371,7 @@ function updateControlsState() {
     }
 }
 
-// ===== COLOR SELECTION (NEW) =====
+// ===== COLOR SELECTION =====
 function selectColor(color) {
     selectedColor = color;
 
@@ -400,7 +428,7 @@ speedSlider.addEventListener('change', function () {
         });
 });
 
-// ===== FOLLOW DISTANCE SLIDER (NEW) =====
+// ===== FOLLOW DISTANCE SLIDER =====
 const followDistanceSlider = document.getElementById('followDistanceSlider');
 const followDistanceDisplay = document.getElementById('followDistanceDisplay');
 
@@ -461,14 +489,12 @@ document.addEventListener('keydown', function (event) {
     }
 });
 
-// ===== XỬ LÝ THẢ PHÍM (Dừng xe khi thả tay) =====
+// ===== KEY RELEASE HANDLER =====
 document.addEventListener('keyup', function (event) {
-    // Chỉ xử lý khi đang ở chế độ Manual
     if (currentMode !== 'manual') {
         return;
     }
 
-    // Danh sách các phím di chuyển cần theo dõi
     const moveKeys = [
         'ArrowUp', 'w', 'W',
         'ArrowDown', 's', 'S',
@@ -476,9 +502,8 @@ document.addEventListener('keyup', function (event) {
         'ArrowRight', 'd', 'D'
     ];
 
-    // Nếu phím vừa thả ra nằm trong danh sách trên -> Gửi lệnh STOP
     if (moveKeys.includes(event.key)) {
-        console.log("Thả phím: " + event.key + " -> Gửi lệnh STOP");
+        console.log("Key released: " + event.key + " → Sending STOP");
         sendCommand('stop');
         event.preventDefault();
     }
@@ -541,54 +566,37 @@ document.getElementById('videoStream').addEventListener('error', function () {
         'Video stream connection lost');
 });
 
-// ===== INITIALIZATION =====
-window.addEventListener('load', function () {
-    console.log('Dashboard initialized');
-    updateUptime();
-    updateControlsState();
-
-    // Initial log entry
-    addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-        'LogisticsBot Control Panel initialized');
-});
-
 // ===== VISUAL ODOMETRY UI UPDATES =====
-
-// Update odometry status periodically
 setInterval(updateOdometryStatus, 1000);
 
 async function updateOdometryStatus() {
     try {
         const response = await fetch('/api/odometry/status');
-        
+
         if (!response.ok) {
-            // VO not available
             document.getElementById('vo-distance').textContent = 'N/A';
             document.getElementById('vo-velocity').textContent = 'N/A';
             document.getElementById('vo-quality').textContent = 'N/A';
             return;
         }
-        
+
         const data = await response.json();
-        
+
         if (data.enabled) {
-            // Update distance
-            document.getElementById('vo-distance').textContent = 
+            document.getElementById('vo-distance').textContent =
                 data.distance_cm.toFixed(1) + ' cm';
-            
-            // Update velocity
+
             const velocity = Math.sqrt(
-                Math.pow(data.velocity.x_cm_s, 2) + 
+                Math.pow(data.velocity.x_cm_s, 2) +
                 Math.pow(data.velocity.y_cm_s, 2)
             );
-            document.getElementById('vo-velocity').textContent = 
+            document.getElementById('vo-velocity').textContent =
                 velocity.toFixed(1) + ' cm/s';
-            
-            // Update quality (color-coded)
+
             const qualityBadge = document.getElementById('vo-quality');
             const quality = data.quality;
             qualityBadge.textContent = quality.toFixed(2);
-            
+
             if (quality > 0.7) {
                 qualityBadge.className = 'badge badge-success';
             } else if (quality > 0.4) {
@@ -596,11 +604,10 @@ async function updateOdometryStatus() {
             } else {
                 qualityBadge.className = 'badge badge-danger';
             }
-            
-            // Update position
-            document.getElementById('vo-pos-x').textContent = 
+
+            document.getElementById('vo-pos-x').textContent =
                 data.position.x_cm.toFixed(1);
-            document.getElementById('vo-pos-y').textContent = 
+            document.getElementById('vo-pos-y').textContent =
                 data.position.y_cm.toFixed(1);
         }
     } catch (error) {
@@ -608,22 +615,21 @@ async function updateOdometryStatus() {
     }
 }
 
-// Reset odometry
 async function resetOdometry() {
     if (!confirm('Reset odometry position to (0, 0)?')) {
         return;
     }
-    
+
     try {
         const response = await fetch('/api/odometry/reset', {
             method: 'POST'
         });
-        
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             alert('✅ Odometry reset successfully!');
-            updateOdometryStatus(); // Update UI immediately
+            updateOdometryStatus();
         } else {
             alert('❌ Failed to reset: ' + (data.error || 'Unknown error'));
         }
@@ -633,11 +639,10 @@ async function resetOdometry() {
     }
 }
 
-// Calibration UI (Optional - Advanced)
 function showCalibrationDialog() {
     const distance = prompt('Enter distance traveled (cm):', '20');
     const pixels = prompt('Enter measured pixels:', '400');
-    
+
     if (distance && pixels) {
         calibrateOdometry(parseFloat(distance), parseFloat(pixels));
     }
@@ -655,9 +660,9 @@ async function calibrateOdometry(distance_cm, measured_pixels) {
                 measured_pixels: measured_pixels
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.status === 'success') {
             alert(`✅ Calibration successful!\n${data.message}`);
         } else {
@@ -668,3 +673,15 @@ async function calibrateOdometry(distance_cm, measured_pixels) {
         alert('❌ Network error');
     }
 }
+
+// ===== INITIALIZATION =====
+window.addEventListener('load', function () {
+    console.log('Dashboard initialized');
+    updateUptime();
+    updateControlsState();
+    updateFollowStatusVisibility(); // ✅ Set initial visibility
+
+    // Initial log entry
+    addLogEntry(new Date().toLocaleTimeString(), 'INFO',
+        'LogisticsBot Control Panel initialized');
+});

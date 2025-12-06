@@ -111,7 +111,7 @@ sensors:
         
         # Auto White Balance
         AwbEnable: true          # Enable auto white balance
-        AwbMode: 'auto'          # AWB mode (auto, tungsten, fluorescent, etc.)
+        #AwbMode: 'auto'          # AWB mode (auto, tungsten, fluorescent, etc.)
       
       # Advanced settings
       auto_focus: false          # Camera V2 has fixed focus

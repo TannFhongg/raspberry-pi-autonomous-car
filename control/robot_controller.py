@@ -1,8 +1,7 @@
 """
 Robot Controller - FIXED VERSION
-✅ Fixed typo: loger → logger
-✅ Added IMU error handling
-✅ Improved smart_turn with safety checks
+✅ Fixed: Robot only moves when lane is detected
+✅ Stops immediately when lane is lost
 """
 
 import threading
@@ -27,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class RobotController:
-    """
-    Main robot controller - FIXED VERSION
-    """
+    """Main robot controller"""
     
     def __init__(self, motor_driver, config: dict):
         self.driver = motor_driver
@@ -50,7 +47,7 @@ class RobotController:
         self.watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
         self.watchdog_thread.start()
 
-        # ===== IMU INITIALIZATION WITH ERROR HANDLING =====
+        # IMU initialization
         try:
             self.imu = IMUSensorFusion()
             if self.imu.connected:
@@ -64,31 +61,15 @@ class RobotController:
             self.imu = None
 
         # Visual Odometry
-        # Visual Odometry với scale calibration
-        # Lưu ý: Cần chạy calibration tool để có scale chính xác
-        # Giá trị 0.05 là ví dụ (1 pixel = 0.05 cm)
         vo_config = config.get('visual_odometry', {})
         scale = vo_config.get('scale_factor', 0.05)
         self.vo = VisualOdometry(scale_factor=scale)
         logger.info("✅ Visual Odometry initialized")
 
-
         logger.info("Robot Controller initialized")
     
     def smart_turn(self, target_angle: float, speed: int = 220, timeout: float = 5.0):
-        """
-        Rẽ chính xác sử dụng IMU (Closed-loop control)
-        FIXED VERSION: Added error handling and safety checks
-        
-        Args:
-            target_angle: Góc cần rẽ (Độ). 
-                          +90 = Rẽ Trái 90 độ
-                          -90 = Rẽ Phải 90 độ
-            speed: Tốc độ động cơ khi rẽ (130-255)
-            timeout: Thời gian tối đa (giây)
-        """
-        
-        # ===== SAFETY CHECKS =====
+        """Smart turn using IMU"""
         if speed < 130:
             logger.warning(f"Speed {speed} too low, setting to 130")
             speed = 130
@@ -100,43 +81,34 @@ class RobotController:
             logger.error(f"❌ Invalid angle: {target_angle}° (must be -180 to 180)")
             return
         
-        # ===== IMU CHECK =====
         if not hasattr(self, 'imu') or self.imu is None or not self.imu.connected:
             logger.warning("⚠️ IMU unavailable! Using time-based fallback.")
             self._fallback_turn(target_angle, speed)
             return
         
-        # ===== SMART TURN WITH IMU =====
         logger.info(f"🔄 Smart Turn START: Target {target_angle}° at speed {speed}")
         
         try:
-            # Reset góc về 0
             self.imu.reset_yaw()
-            
             start_time = time.time()
             last_yaw = 0.0
-            stuck_counter = 0  # Detect if robot is stuck
+            stuck_counter = 0
             
             while True:
                 current_yaw = self.imu.get_yaw()
                 error = abs(target_angle) - abs(current_yaw)
                 
-                # ===== STOP CONDITIONS =====
-                
-                # 1. Target reached
                 if error <= 2.0:
                     logger.info(f"✅ Target Reached! Final: {current_yaw:.1f}°")
                     break
                 
-                # 2. Timeout
                 if time.time() - start_time > timeout:
                     logger.warning(f"⚠️ Turn Timeout! Stopped at {current_yaw:.1f}° (Target: {target_angle}°)")
                     break
                 
-                # 3. Robot stuck detection (yaw not changing)
                 if abs(current_yaw - last_yaw) < 0.1:
                     stuck_counter += 1
-                    if stuck_counter > 50:  # Stuck for 0.5s
+                    if stuck_counter > 50:
                         logger.error(f"❌ Robot appears stuck! Emergency stop.")
                         break
                 else:
@@ -144,7 +116,6 @@ class RobotController:
                 
                 last_yaw = current_yaw
                 
-                # 4. Overshoot protection
                 if target_angle > 0 and current_yaw > target_angle + 5:
                     logger.warning(f"⚠️ Overshoot detected! {current_yaw:.1f}° > {target_angle}°")
                     break
@@ -152,7 +123,6 @@ class RobotController:
                     logger.warning(f"⚠️ Overshoot detected! {current_yaw:.1f}° < {target_angle}°")
                     break
                 
-                # ===== SPEED CONTROL (Adaptive) =====
                 if error > 30:
                     current_speed = speed
                 elif error > 10:
@@ -160,28 +130,23 @@ class RobotController:
                 else:
                     current_speed = max(130, int(speed * 0.5))
                 
-                # ===== MOTOR CONTROL =====
                 if target_angle > 0:
                     self.driver.turn_left(current_speed)
                 else:
                     self.driver.turn_right(current_speed)
                 
-                time.sleep(0.01)  # 100Hz update
+                time.sleep(0.01)
             
         except Exception as e:
             logger.error(f"❌ Error during smart turn: {e}")
         
         finally:
-            # Always stop motor
             self.driver.stop()
             time.sleep(0.2)
     
     def _fallback_turn(self, target_angle: float, speed: int):
-        """
-        Fallback: Rẽ theo thời gian khi IMU không khả dụng
-        """
+        """Fallback turn based on time"""
         duration = 0.6 * (abs(target_angle) / 90.0)
-        
         logger.info(f"⏱️ Fallback Turn: {target_angle}° for {duration:.2f}s")
         
         if target_angle > 0:
@@ -268,8 +233,6 @@ class RobotController:
     
     def get_state(self) -> dict:
         left_speed, right_speed = self.driver.get_speeds()
-        
-        # Include IMU status
         imu_status = "Connected" if (self.imu and self.imu.connected) else "Disconnected"
         
         return {
@@ -311,31 +274,18 @@ class RobotController:
                 left, right = self.driver.get_speeds()
                 if left == 0 and right == 0:
                     self.current_state = 'IDLE'
-# --------------------------------------------------------------    
+
     def update_odometry(self, frame):
-        """
-        Update visual odometry (gọi trong auto mode loop)
-
-        Args:
-            frame: Camera frame
-
-        Returns:
-            dict: Navigation status
-        """
+        """Update visual odometry"""
         if not hasattr(self, 'vo') or self.vo is None:
             return {'error': 'VO not initialized'}
 
         try:
-            # Process frame
             dx, dy = self.vo.process_frame(frame)
-
-            # Get comprehensive status
             status = self.vo.get_status()
             status['dx'] = dx
             status['dy'] = dy
-
             return status
-
         except Exception as e:
             logger.error(f"❌ VO update error: {e}")
             return {'error': str(e)}
@@ -345,23 +295,20 @@ class RobotController:
         if hasattr(self, 'vo') and self.vo is not None:
             self.vo.reset()
             logger.info("🔄 Visual Odometry reset")
-# --------------------------------------------------------------
 
     def cleanup(self):
         self.running = False
-        
-        # Stop IMU thread
         if self.imu:
             self.imu.stop()
-        
         self.driver.cleanup()
         logger.info("Robot Controller cleaned up")
 
 
-# ===== AUTO MODE CONTROLLER (With Fixed Logger) =====
+# ===== AUTO MODE CONTROLLER (FIXED) =====
 class AutoModeController:
     """
     Autonomous mode controller - FIXED VERSION
+    ✅ Robot only moves when lane is detected
     """
     
     def __init__(self, robot_controller: RobotController):
@@ -395,8 +342,20 @@ class AutoModeController:
         self.DIST_PREPARE = 140
         self.DIST_EXECUTE = 170
         
+        # ===== NEW: Lane detection thresholds =====
+        self.MAX_ERROR_THRESHOLD = 150  # pixels (nếu error > threshold -> lane lost)
         self.lane_lost_count = 0
-        self.lane_lost_threshold = 10
+        self.lane_lost_threshold = 5  # GIẢM từ 10 → 5 (dừng nhanh hơn)
+        
+        # ===== Lane Recovery System =====
+        self.recovery_mode = False
+        self.recovery_direction = 'left'  # 'left' hoặc 'right'
+        self.recovery_scan_speed = 150    # Tốc độ quay khi tìm lane
+        self.recovery_scan_time = 0.0     # Thời gian đã quét
+        self.recovery_max_scan_time = 3.0 # Tối đa 3 giây mỗi hướng
+        self.recovery_attempts = 0
+        self.recovery_max_attempts = 2    # Quét trái-phải tối đa 2 lần
+        
         self.latest_debug_frame = None
         self.latest_error = 0
         self.latest_correction = 0
@@ -438,6 +397,11 @@ class AutoModeController:
             return False
     
     def _auto_loop(self):
+        """
+        FIXED AUTO LOOP
+        ✅ Robot chỉ chạy khi bắt được lane
+        ✅ Tự động tìm lại lane khi lost (quét trái-phải)
+        """
         logger.info("Auto loop started")
         
         while self.running:
@@ -450,6 +414,7 @@ class AutoModeController:
                     time.sleep(0.1)
                     continue
                 
+                # ===== 1. DETECT TRAFFIC SIGNS =====
                 detections, debug_frame = self.detector.detect(frame)
                 sign_action = None
                 
@@ -476,13 +441,11 @@ class AutoModeController:
                             self.base_speed = self.default_speed
                         
                         elif sign_name == 'left_turn_sign':
-                            # ✅ FIXED: logger (not loger)
                             logger.info("⬅️ Detected Left Turn Sign -> Smart Turn +90°")
                             self.robot.smart_turn(90, speed=220)
                             continue
                         
                         elif sign_name == 'right_turn_sign':
-                            # ✅ FIXED: logger (not loger)
                             logger.info("➡️ Detected Right Turn Sign -> Smart Turn -90°")
                             self.robot.smart_turn(-90, speed=220)
                             continue
@@ -498,34 +461,81 @@ class AutoModeController:
                 if sign_action in ["STOP", "TURN"]:
                     continue
                 
-                # Lane Following
+                # ===== 2. LANE DETECTION =====
                 error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
                 self.latest_debug_frame = lane_debug_frame
                 self.latest_error = error
                 
+                # ===== 3. LANE VALIDITY CHECK =====
+                is_lane_valid = abs(error) <= self.MAX_ERROR_THRESHOLD
+                
+                if not is_lane_valid:
+                    # ===== LANE LOST - ENTER RECOVERY MODE =====
+                    self.lane_lost_count += 1
+                    
+                    logger.warning(f"⚠️ Lane lost! Error: {error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
+                    
+                    if self.lane_lost_count >= self.lane_lost_threshold:
+                        # Kích hoạt chế độ tìm kiếm lane
+                        if not self.recovery_mode:
+                            logger.info("🔍 RECOVERY MODE ACTIVATED - Scanning for lane...")
+                            self.recovery_mode = True
+                            self.recovery_scan_time = 0.0
+                            self.recovery_attempts = 0
+                            self.recovery_direction = 'left'  # Bắt đầu quét từ trái
+                        
+                        # Thực hiện recovery
+                        lane_found = self._perform_lane_recovery(frame)
+                        
+                        if lane_found:
+                            logger.info("✅ Lane found! Resuming normal operation.")
+                            self.recovery_mode = False
+                            self.lane_lost_count = 0
+                        elif self.recovery_attempts >= self.recovery_max_attempts:
+                            # Thất bại sau nhiều lần thử
+                            logger.error("❌ Lane recovery failed! Robot STOPPED.")
+                            self.robot.driver.stop()
+                            self.robot.current_state = 'RECOVERY FAILED - STOPPED'
+                            self.recovery_mode = False
+                            time.sleep(1.0)
+                        
+                        continue
+                    else:
+                        # Dừng tạm thời trong khi đếm
+                        self.robot.driver.stop()
+                        self.robot.current_state = f'SEARCHING LANE ({self.lane_lost_count}/{self.lane_lost_threshold})'
+                        time.sleep(0.05)
+                        continue
+                
+                # ===== LANE FOUND - RESET COUNTERS =====
+                self.lane_lost_count = 0
+                
+                # Nếu đang trong recovery mode và tìm thấy lane -> thoát recovery
+                if self.recovery_mode:
+                    logger.info("✅ Lane recovered during scan!")
+                    self.recovery_mode = False
+                    self.robot.driver.stop()
+                    time.sleep(0.2)
+                
+                if not detections:
+                    self.robot.current_state = f'FOLLOWING LANE (Error: {error:.0f}px)'
+                
+                # ===== 4. PID CONTROL =====
                 current_time = time.time()
                 dt = 0.05
-                
-                if abs(error) > frame.shape[1] * 0.4:
-                    self.lane_lost_count += 1
-                    if self.lane_lost_count >= self.lane_lost_threshold:
-                        self.robot.driver.stop()
-                        self.robot.current_state = 'LANE LOST'
-                        continue
-                else:
-                    self.lane_lost_count = 0
-                    if not detections:
-                        self.robot.current_state = 'FOLLOWING LANE'
                 
                 correction = self.pid.compute(error, dt)
                 self.latest_correction = correction
                 
+                # Calculate motor speeds
                 left_speed = max(-255, min(255, int(self.base_speed - correction)))
                 right_speed = max(-255, min(255, int(self.base_speed + correction)))
                 
+                # ===== 5. SEND TO MOTORS =====
                 self.robot.driver.set_motors(left_speed, right_speed)
+                
                 time.sleep(0.03)
                 
             except Exception as e:
@@ -536,6 +546,49 @@ class AutoModeController:
         self.robot.driver.stop()
         logger.info("Auto loop ended")
     
+    def _perform_lane_recovery(self, frame) -> bool:
+        """
+        Thực hiện tìm kiếm lane bằng cách quét trái-phải
+        
+        Returns:
+            True nếu tìm thấy lane, False nếu chưa
+        """
+        # Kiểm tra xem có bắt được lane trong frame hiện tại không
+        error, x_line, center_x, _ = detect_line(frame, self.detection_config)
+        
+        if abs(error) <= self.MAX_ERROR_THRESHOLD:
+            # Tìm thấy lane!
+            return True
+        
+        # Tiếp tục quét
+        self.recovery_scan_time += 0.05  # Tăng theo chu kỳ loop (50ms)
+        
+        if self.recovery_scan_time >= self.recovery_max_scan_time:
+            # Hết thời gian quét theo hướng hiện tại, đổi hướng
+            if self.recovery_direction == 'left':
+                logger.info("🔄 Switching recovery scan direction: LEFT → RIGHT")
+                self.recovery_direction = 'right'
+            else:
+                logger.info("🔄 Switching recovery scan direction: RIGHT → LEFT")
+                self.recovery_direction = 'left'
+                self.recovery_attempts += 1  # Tăng số lần thử sau khi quét cả 2 hướng
+            
+            self.recovery_scan_time = 0.0
+            
+            if self.recovery_attempts >= self.recovery_max_attempts:
+                # Đã thử đủ số lần
+                return False
+        
+        # Thực hiện quay để quét
+        if self.recovery_direction == 'left':
+            self.robot.driver.turn_left(self.recovery_scan_speed)
+            self.robot.current_state = f'SCANNING LEFT... ({self.recovery_scan_time:.1f}s)'
+        else:
+            self.robot.driver.turn_right(self.recovery_scan_speed)
+            self.robot.current_state = f'SCANNING RIGHT... ({self.recovery_scan_time:.1f}s)'
+        
+        return False
+    
     def get_debug_frame(self):
         return self.latest_debug_frame
     
@@ -545,12 +598,10 @@ class AutoModeController:
             'correction': self.latest_correction,
             **self.pid.get_components()
         }
-    
+
+
 class FollowModeController:
-    """
-    Follow mode controller
-    Uses YOLOv11 to track specific colored objects (6cm x 6cm targets)
-    """
+    """Follow mode controller using YOLOv11"""
     
     def __init__(self, robot_controller: RobotController):
         self.robot = robot_controller
@@ -558,7 +609,6 @@ class FollowModeController:
         self.thread: Optional[threading.Thread] = None
         self.camera: Optional[CameraManager] = None
         
-        # AI Detector
         self.detector = ObjectDetector(model_path='data/models/best_ncnn_model', conf_threshold=0.5)
         
         self.color_map = {
@@ -570,17 +620,14 @@ class FollowModeController:
         self.target_color_name = 'red'
         self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
         
-        # --- CẤU HÌNH CAMERA (Calibration) ---
-        self.FOCAL_LENGTH = 240  # Tiêu cự (đã tính ở bài trước)
-        self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
+        self.FOCAL_LENGTH = 240
+        self.OBJECT_WIDTH = 6
         
-        # Khởi tạo các ngưỡng khoảng cách mặc định (50cm)
         self.SIZE_FORWARD = 0
         self.SIZE_STOP = 0
         self.SIZE_BACK = 0
-        self.set_follow_distance(50) # Cài đặt mặc định ban đầu
+        self.set_follow_distance(50)
         
-        # Web Info
         self.target_x = 0
         self.target_y = 0
         self.target_w = 0
@@ -611,29 +658,17 @@ class FollowModeController:
         logger.info(f"Target color changed to: {color}")
     
     def set_follow_distance(self, distance: int):
-        """
-        Cập nhật khoảng cách bám theo từ Web Dashboard
-        Input: distance (cm)
-        Output: Cập nhật các ngưỡng Pixel (SIZE_STOP...)
-        """
-        if distance < 10: distance = 10 # Giới hạn tối thiểu 10cm
-        
-        # Tính kích thước Pixel mục tiêu tại khoảng cách đó
-        # Công thức: Pixel = (Focal * Real_Size) / Distance
+        if distance < 10: distance = 10
         target_pixel_size = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / distance
+        margin = 10
         
-        # Thiết lập các vùng hành động xung quanh kích thước mục tiêu
-        # Ví dụ: Nếu muốn dừng ở 100px -> Tiến khi < 90, Lùi khi > 110
-        margin = 10 # Khoảng đệm
-        
-        self.SIZE_STOP = int(target_pixel_size)      # Điểm dừng chuẩn
-        self.SIZE_FORWARD = int(target_pixel_size - margin) # Xa hơn -> Tiến
-        self.SIZE_BACK = int(target_pixel_size + margin)    # Gần hơn -> Lùi
+        self.SIZE_STOP = int(target_pixel_size)
+        self.SIZE_FORWARD = int(target_pixel_size - margin)
+        self.SIZE_BACK = int(target_pixel_size + margin)
         
         logger.info(f"Set Follow Distance: {distance}cm -> Stop Size: {self.SIZE_STOP}px")
     
     def get_target_data(self) -> dict:
-        # Tính ngược lại khoảng cách hiện tại để hiển thị lên Web
         current_dist = 0
         if self.target_w > 0:
             current_dist = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / self.target_w
@@ -646,7 +681,7 @@ class FollowModeController:
             'target_w': self.target_w,
             'target_h': self.target_h,
             'confidence': self.confidence,
-            'target_distance': current_dist # Gửi khoảng cách thật về Web
+            'target_distance': current_dist
         }
     
     def _init_shared_camera(self) -> bool:
@@ -678,23 +713,20 @@ class FollowModeController:
                 if valid_objs:
                     target = max(valid_objs, key=lambda x: x['w'] * x['h'])
                     
-                    # PID Rẽ
                     center_x = frame.shape[1] / 2
                     error_x = center_x - target['x']
                     turn_output = self.pid_turn.compute(error_x)
                     
-                    # Điều khiển Tốc độ (Dựa trên các ngưỡng đã tính động)
-                    # Lấy cạnh lớn nhất để ổn định (vì hình vuông 6x6)
                     obj_size = max(target['w'], target['h'])
                     
                     if obj_size < self.SIZE_FORWARD:
-                        forward_speed = 220 # Xa -> Tiến nhanh
+                        forward_speed = 220
                     elif obj_size > self.SIZE_BACK:
-                        forward_speed = -150 # Quá gần -> Lùi
+                        forward_speed = -150
                     elif obj_size > self.SIZE_STOP:
-                         forward_speed = 0 # Hơi gần -> Dừng
+                         forward_speed = 0
                     else:
-                        forward_speed = 0 # Đúng tầm -> Dừng
+                        forward_speed = 0
                     
                     left_speed = max(-255, min(255, int(forward_speed + turn_output)))
                     right_speed = max(-255, min(255, int(forward_speed - turn_output)))
@@ -712,7 +744,7 @@ class FollowModeController:
                     self.robot.driver.stop()
                     self.robot.current_state = "SEARCHING..."
                     self.confidence = 0
-                    self.target_w = 0 # Reset width để tính distance = 0
+                    self.target_w = 0
                 
                 time.sleep(0.05)
                 
