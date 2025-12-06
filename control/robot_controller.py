@@ -339,8 +339,9 @@ class AutoModeController:
         self.min_speed = lane_config.get('min_speed', 60)
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
-        self.DIST_PREPARE = 140
-        self.DIST_EXECUTE = 170
+        # ===== SIGN DETECTION THRESHOLDS (AUTO MODE) =====
+        self.DIST_PREPARE = 120   # ✅ Chuẩn bị khi biển còn xa (120px)
+        self.DIST_EXECUTE = 160   # ✅ Thực thi khi biển gần (160px)
         
         # ===== NEW: Lane detection thresholds =====
         self.MAX_ERROR_THRESHOLD = 150  # pixels (nếu error > threshold -> lane lost)
@@ -350,7 +351,7 @@ class AutoModeController:
         # ===== Lane Recovery System =====
         self.recovery_mode = False
         self.recovery_direction = 'left'  # 'left' hoặc 'right'
-        self.recovery_scan_speed = 150    # Tốc độ quay khi tìm lane
+        self.recovery_scan_speed = 130    # Tốc độ quay khi tìm lane
         self.recovery_scan_time = 0.0     # Thời gian đã quét
         self.recovery_max_scan_time = 3.0 # Tối đa 3 giây mỗi hướng
         self.recovery_attempts = 0
@@ -423,14 +424,18 @@ class AutoModeController:
                     sign_name = sign['class_name']
                     sign_size = max(sign['w'], sign['h'])
                     
-                    self.robot.current_state = f"SIGN: {sign_name} ({sign_size:.0f}px)"
-                    
+                    # ===== SIGN DETECTION LOGIC (AUTO MODE) =====
                     if sign_size < self.DIST_PREPARE:
-                        pass
-                    elif sign_size > self.DIST_EXECUTE + 20:
-                        pass
-                    else:
-                        logger.info(f"🚦 EXECUTING: {sign_name} (Size: {sign_size:.0f})")
+                        # Biển còn xa (< 120px) - Chưa làm gì
+                        self.robot.current_state = f"DETECTED: {sign_name} ({sign_size:.0f}px) - Too far"
+                    
+                    elif sign_size >= self.DIST_PREPARE and sign_size < self.DIST_EXECUTE:
+                        # Biển trong vùng chuẩn bị (120-160px) - Hiển thị warning
+                        self.robot.current_state = f"PREPARE: {sign_name} ({sign_size:.0f}px)"
+                    
+                    elif sign_size >= self.DIST_EXECUTE:
+                        # Biển đủ gần (>= 160px) - THỰC THI HÀNH ĐỘNG
+                        logger.info(f"🚦 EXECUTING: {sign_name} (Size: {sign_size:.0f}px)")
                         
                         if sign_name in ['stop_sign', 'red_light']:
                             self.robot.driver.stop()
@@ -620,8 +625,13 @@ class FollowModeController:
         self.target_color_name = 'red'
         self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
         
-        self.FOCAL_LENGTH = 240
-        self.OBJECT_WIDTH = 6
+        # ===== TARGET DETECTION THRESHOLDS (FOLLOW MODE) =====
+        self.DIST_PREPARE_FOLLOW = 120   # ✅ Chuẩn bị khi target còn xa (120px)
+        self.DIST_EXECUTE_FOLLOW = 200   # ✅ Thực thi khi target gần (200px)
+        
+        # --- CẤU HÌNH CAMERA (Calibration) ---
+        self.FOCAL_LENGTH = 240  # Tiêu cự (đã tính ở bài trước)
+        self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
         
         self.SIZE_FORWARD = 0
         self.SIZE_STOP = 0
@@ -717,22 +727,33 @@ class FollowModeController:
                     error_x = center_x - target['x']
                     turn_output = self.pid_turn.compute(error_x)
                     
+                    # Lấy kích thước lớn nhất (vì hình vuông 6x6)
                     obj_size = max(target['w'], target['h'])
                     
-                    if obj_size < self.SIZE_FORWARD:
+                    # ===== TARGET SIZE DETECTION LOGIC (FOLLOW MODE) =====
+                    if obj_size < self.DIST_PREPARE_FOLLOW:
+                        # Target còn xa (< 120px) - Tiến nhanh
                         forward_speed = 220
-                    elif obj_size > self.SIZE_BACK:
-                        forward_speed = -150
-                    elif obj_size > self.SIZE_STOP:
-                         forward_speed = 0
+                        self.robot.current_state = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) - Far"
+                    
+                    elif obj_size >= self.DIST_PREPARE_FOLLOW and obj_size < self.DIST_EXECUTE_FOLLOW:
+                        # Target trong vùng chuẩn bị (120-200px) - Giảm tốc
+                        forward_speed = 150
+                        self.robot.current_state = f"PREPARING {target['class_name']} ({obj_size:.0f}px) - Medium"
+                    
+                    elif obj_size >= self.DIST_EXECUTE_FOLLOW:
+                        # Target đủ gần (>= 200px) - DỪNG hoặc thực hiện hành động
+                        forward_speed = 0
+                        self.robot.current_state = f"TARGET REACHED {target['class_name']} ({obj_size:.0f}px) - Stop"
+                    
                     else:
+                        # Fallback (không nên xảy ra)
                         forward_speed = 0
                     
                     left_speed = max(-255, min(255, int(forward_speed + turn_output)))
                     right_speed = max(-255, min(255, int(forward_speed - turn_output)))
                     
                     self.robot.driver.set_motors(left_speed, right_speed)
-                    self.robot.current_state = f"TRACKING {target['class_name']} ({obj_size:.0f}px)"
                     
                     self.target_x = int(target['x'])
                     self.target_y = int(target['y'])
