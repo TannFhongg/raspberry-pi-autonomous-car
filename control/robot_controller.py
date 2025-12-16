@@ -333,7 +333,7 @@ class AutoModeController:
         )
         
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 100)
+        self.base_speed = lane_config.get('base_speed', 90)
         self.default_speed = self.base_speed
         self.max_speed = lane_config.get('max_speed', 255)
         self.min_speed = lane_config.get('min_speed', 60)

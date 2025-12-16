@@ -260,19 +260,19 @@ lane_following:
   
   pid:
     # Proportional Gain (Response strength)
-    kp: 1.0                      # BASELINE: Good for most conditions
+    kp: 0.3                      # BASELINE: Good for most conditions
     # Effect: Higher = faster response, more aggressive steering
     # Too high: Oscillation, overshooting
     # Too low: Slow response, can't handle sharp turns
     
     # Integral Gain (Steady-state error correction)
-    ki: 0.02                     # SMALL VALUE: Correct cumulative error
+    ki: 0.0                     # SMALL VALUE: Correct cumulative error
     # Effect: Eliminates persistent offset over time
     # Too high: Overshooting, instability
     # Too low: Steady-state error remains
     
     # Derivative Gain (Damping, smoothness)
-    kd: 0.4                      # DAMPING: Reduce oscillation
+    kd: 0.05                      # DAMPING: Reduce oscillation
     # Effect: Predicts future error, smooths response
     # Too high: Sluggish, can amplify noise
     # Too low: Oscillation, jittery movement
@@ -290,7 +290,7 @@ lane_following:
   # SPEED CONTROL
   # ============================================================================
   # Dynamic speed adjustment based on error magnitude
-  base_speed: 100                # Base PWM speed (0-255)
+  base_speed: 90                # Base PWM speed (0-255)
   max_speed: 255                 # Maximum speed on straight sections
   min_speed: 80                  # Minimum speed during sharp turns
   
@@ -339,10 +339,10 @@ pid_presets:
   
   # Balanced - General purpose (RECOMMENDED)
   balanced:
-    kp: 0.45
+    kp: 0.3
     ki: 0.0
-    kd: 0.25
-    base_speed: 100
+    kd: 0.05
+    base_speed: 90  
     note: "Good balance of speed and stability"
   
   # Aggressive - Fast, sharp turns
@@ -467,7 +467,7 @@ competition_mode:
   
   # Overrides when enabled
   overrides:
-    base_speed: 100
+    base_speed: 90
     pid_preset: 'balanced'
     logging_level: 'WARNING'     # Reduce logging overhead
     save_debug_frames: false
