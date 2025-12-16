@@ -324,9 +324,9 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.8),
+            kp=pid_config.get('kp', 0.6),
             ki=pid_config.get('ki', 0.0),
-            kd=pid_config.get('kd', 0.3),
+            kd=pid_config.get('kd', 0.1),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
@@ -340,8 +340,8 @@ class AutoModeController:
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
         # ===== SIGN DETECTION THRESHOLDS (AUTO MODE) =====
-        self.DIST_PREPARE = 120   # ✅ Chuẩn bị khi biển còn xa (120px)
-        self.DIST_EXECUTE = 160   # ✅ Thực thi khi biển gần (160px)
+        self.DIST_PREPARE = 135   # ✅ Chuẩn bị khi biển còn xa (120px)
+        self.DIST_EXECUTE = 220   # ✅ Thực thi khi biển gần (160px)
         
         # ===== NEW: Lane detection thresholds =====
         self.MAX_ERROR_THRESHOLD = 150  # pixels (nếu error > threshold -> lane lost)
@@ -623,14 +623,14 @@ class FollowModeController:
             'yellow': 'yellow_color'
         }
         self.target_color_name = 'red'
-        self.pid_turn = PIDController(kp=0.6, ki=0.0, kd=0.2, output_max=255)
+        self.pid_turn = PIDController(kp=0.8, ki=0.0, kd=0.3, output_max=255)
         
         # ===== TARGET DETECTION THRESHOLDS (FOLLOW MODE) =====
-        self.DIST_PREPARE_FOLLOW = 120   # ✅ Chuẩn bị khi target còn xa (120px)
-        self.DIST_EXECUTE_FOLLOW = 200   # ✅ Thực thi khi target gần (200px)
+        self.DIST_PREPARE_FOLLOW = 135   # ✅ Chuẩn bị khi target còn xa (120px)
+        self.DIST_EXECUTE_FOLLOW = 220   # ✅ Thực thi khi target gần (200px)
         
         # --- CẤU HÌNH CAMERA (Calibration) ---
-        self.FOCAL_LENGTH = 240  # Tiêu cự (đã tính ở bài trước)
+        self.FOCAL_LENGTH = 330  # Tiêu cự (đã tính ở bài trước)
         self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
         
         self.SIZE_FORWARD = 0

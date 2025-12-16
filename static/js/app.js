@@ -685,3 +685,9 @@ window.addEventListener('load', function () {
     addLogEntry(new Date().toLocaleTimeString(), 'INFO',
         'LogisticsBot Control Panel initialized');
 });
+
+// THÊM ĐOẠN NÀY: Nhận dữ liệu Real-time từ Arduino
+socket.on('arduino_sensors', function (data) {
+    console.log('Arduino data:', data);
+    updateSensorData(data); // Tái sử dụng hàm update giao diện có sẵn
+});
