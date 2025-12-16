@@ -90,7 +90,7 @@ sensors:
     # Why resize to 640x480? Faster processing, optimized parameters
     resolution: [1640, 1232]
     framerate: 30                # Target FPS (will be auto-adjusted)
-    device: 0                    # Camera index (0 = first camera)
+    device: 1                   # Camera index (0 = first camera)
     
     # Picamera2 specific settings
     picamera2:
@@ -135,7 +135,7 @@ ai:
     # CRITICAL: Lane width in pixels at 640x480 resolution
     # ⚠️ MUST BE CALIBRATED using test_lane_optimized.py (Option 1)
     # Default value is estimated, actual value depends on camera height/angle
-    lane_width_pixels: 330       # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
+    lane_width_pixels: 310       # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
     
     # Region of Interest (ROI) - Trapezoid shape
     # Lower ratio = look closer to robot (better for sharp turns)
@@ -290,7 +290,7 @@ lane_following:
   # SPEED CONTROL
   # ============================================================================
   # Dynamic speed adjustment based on error magnitude
-  base_speed: 130                # Base PWM speed (0-255)
+  base_speed: 100                # Base PWM speed (0-255)
   max_speed: 255                 # Maximum speed on straight sections
   min_speed: 80                  # Minimum speed during sharp turns
   
@@ -339,10 +339,10 @@ pid_presets:
   
   # Balanced - General purpose (RECOMMENDED)
   balanced:
-    kp: 0.6
+    kp: 0.45
     ki: 0.0
-    kd: 0.1
-    base_speed: 130
+    kd: 0.25
+    base_speed: 100
     note: "Good balance of speed and stability"
   
   # Aggressive - Fast, sharp turns
@@ -467,7 +467,7 @@ competition_mode:
   
   # Overrides when enabled
   overrides:
-    base_speed: 130
+    base_speed: 100
     pid_preset: 'balanced'
     logging_level: 'WARNING'     # Reduce logging overhead
     save_debug_frames: false
