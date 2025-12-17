@@ -1,8 +1,7 @@
 """
-Robot Controller - COMPLETE VERSION
-✅ Manual Mode
-✅ Auto Mode (Lane Following)
-✅ IMPROVED Follow Mode (Size-based distance control with PID)
+Robot Controller - FIXED VERSION
+✅ Fixed: Robot only moves when lane is detected
+✅ Stops immediately when lane is lost
 """
 
 import threading
@@ -22,14 +21,9 @@ from perception.camera_manager import CameraManager, get_web_camera
 from perception.object_detector import ObjectDetector
 from perception.imu_sensor_fusion import IMUSensorFusion
 from perception.visual_odometry import VisualOdometry
-import cv2
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================
-# ROBOT CONTROLLER (Base Class)
-# ============================================================
 
 class RobotController:
     """Main robot controller"""
@@ -41,7 +35,7 @@ class RobotController:
         # Current state
         self.current_mode = 'manual'
         self.current_state = 'IDLE'
-        self.current_speed = 90
+        self.current_speed = 180
         
         # Safety
         self.emergency_stopped = False
@@ -310,12 +304,12 @@ class RobotController:
         logger.info("Robot Controller cleaned up")
 
 
-# ============================================================
-# AUTO MODE CONTROLLER (Lane Following)
-# ============================================================
-
+# ===== AUTO MODE CONTROLLER (FIXED) =====
 class AutoModeController:
-    """Autonomous mode controller - Lane following with sign detection"""
+    """
+    Autonomous mode controller - FIXED VERSION
+    ✅ Robot only moves when lane is detected
+    """
     
     def __init__(self, robot_controller: RobotController):
         self.robot = robot_controller
@@ -330,38 +324,38 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.25),
+            kp=pid_config.get('kp', 0.4),
             ki=pid_config.get('ki', 0.0),
-            kd=pid_config.get('kd', 0.05),
+            kd=pid_config.get('kd', 0.25),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
         )
         
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 100)
+        self.base_speed = lane_config.get('base_speed', 90)
         self.default_speed = self.base_speed
         self.max_speed = lane_config.get('max_speed', 255)
         self.min_speed = lane_config.get('min_speed', 60)
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
-        # Sign detection thresholds
-        self.DIST_PREPARE = 130
-        self.DIST_EXECUTE = 250
+        # ===== SIGN DETECTION THRESHOLDS (AUTO MODE) =====
+        self.DIST_PREPARE = 130   # ✅ Chuẩn bị khi biển còn xa (120px)
+        self.DIST_EXECUTE = 200   # ✅ Thực thi khi biển gần (160px)
         
-        # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 150
+        # ===== NEW: Lane detection thresholds =====
+        self.MAX_ERROR_THRESHOLD = 150  # pixels (nếu error > threshold -> lane lost)
         self.lane_lost_count = 0
-        self.lane_lost_threshold = 5
+        self.lane_lost_threshold = 5  # GIẢM từ 10 → 5 (dừng nhanh hơn)
         
-        # Lane Recovery System
+        # ===== Lane Recovery System =====
         self.recovery_mode = False
-        self.recovery_direction = 'left'
-        self.recovery_scan_speed = 130
-        self.recovery_scan_time = 0.0
-        self.recovery_max_scan_time = 3.0
+        self.recovery_direction = 'left'  # 'left' hoặc 'right'
+        self.recovery_scan_speed = 130    # Tốc độ quay khi tìm lane
+        self.recovery_scan_time = 0.0     # Thời gian đã quét
+        self.recovery_max_scan_time = 3.0 # Tối đa 3 giây mỗi hướng
         self.recovery_attempts = 0
-        self.recovery_max_attempts = 2
+        self.recovery_max_attempts = 2    # Quét trái-phải tối đa 2 lần
         
         self.latest_debug_frame = None
         self.latest_error = 0
@@ -404,7 +398,11 @@ class AutoModeController:
             return False
     
     def _auto_loop(self):
-        """Auto loop - Lane following with sign detection"""
+        """
+        FIXED AUTO LOOP
+        ✅ Robot chỉ chạy khi bắt được lane
+        ✅ Tự động tìm lại lane khi lost (quét trái-phải)
+        """
         logger.info("Auto loop started")
         
         while self.running:
@@ -417,7 +415,7 @@ class AutoModeController:
                     time.sleep(0.1)
                     continue
                 
-                # Detect traffic signs
+                # ===== 1. DETECT TRAFFIC SIGNS =====
                 detections, debug_frame = self.detector.detect(frame)
                 sign_action = None
                 
@@ -426,13 +424,17 @@ class AutoModeController:
                     sign_name = sign['class_name']
                     sign_size = max(sign['w'], sign['h'])
                     
+                    # ===== SIGN DETECTION LOGIC (AUTO MODE) =====
                     if sign_size < self.DIST_PREPARE:
+                        # Biển còn xa (< 120px) - Chưa làm gì
                         self.robot.current_state = f"DETECTED: {sign_name} ({sign_size:.0f}px) - Too far"
                     
                     elif sign_size >= self.DIST_PREPARE and sign_size < self.DIST_EXECUTE:
+                        # Biển trong vùng chuẩn bị (120-160px) - Hiển thị warning
                         self.robot.current_state = f"PREPARE: {sign_name} ({sign_size:.0f}px)"
                     
                     elif sign_size >= self.DIST_EXECUTE:
+                        # Biển đủ gần (>= 160px) - THỰC THI HÀNH ĐỘNG
                         logger.info(f"🚦 EXECUTING: {sign_name} (Size: {sign_size:.0f}px)")
                         
                         if sign_name in ['stop_sign', 'red_light']:
@@ -464,29 +466,32 @@ class AutoModeController:
                 if sign_action in ["STOP", "TURN"]:
                     continue
                 
-                # Lane detection
+                # ===== 2. LANE DETECTION =====
                 error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
                 self.latest_debug_frame = lane_debug_frame
                 self.latest_error = error
                 
-                # Lane validity check
+                # ===== 3. LANE VALIDITY CHECK =====
                 is_lane_valid = abs(error) <= self.MAX_ERROR_THRESHOLD
                 
                 if not is_lane_valid:
+                    # ===== LANE LOST - ENTER RECOVERY MODE =====
                     self.lane_lost_count += 1
                     
                     logger.warning(f"⚠️ Lane lost! Error: {error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
                     
                     if self.lane_lost_count >= self.lane_lost_threshold:
+                        # Kích hoạt chế độ tìm kiếm lane
                         if not self.recovery_mode:
                             logger.info("🔍 RECOVERY MODE ACTIVATED - Scanning for lane...")
                             self.recovery_mode = True
                             self.recovery_scan_time = 0.0
                             self.recovery_attempts = 0
-                            self.recovery_direction = 'left'
+                            self.recovery_direction = 'left'  # Bắt đầu quét từ trái
                         
+                        # Thực hiện recovery
                         lane_found = self._perform_lane_recovery(frame)
                         
                         if lane_found:
@@ -494,6 +499,7 @@ class AutoModeController:
                             self.recovery_mode = False
                             self.lane_lost_count = 0
                         elif self.recovery_attempts >= self.recovery_max_attempts:
+                            # Thất bại sau nhiều lần thử
                             logger.error("❌ Lane recovery failed! Robot STOPPED.")
                             self.robot.driver.stop()
                             self.robot.current_state = 'RECOVERY FAILED - STOPPED'
@@ -502,14 +508,16 @@ class AutoModeController:
                         
                         continue
                     else:
+                        # Dừng tạm thời trong khi đếm
                         self.robot.driver.stop()
                         self.robot.current_state = f'SEARCHING LANE ({self.lane_lost_count}/{self.lane_lost_threshold})'
                         time.sleep(0.05)
                         continue
                 
-                # Lane found
+                # ===== LANE FOUND - RESET COUNTERS =====
                 self.lane_lost_count = 0
                 
+                # Nếu đang trong recovery mode và tìm thấy lane -> thoát recovery
                 if self.recovery_mode:
                     logger.info("✅ Lane recovered during scan!")
                     self.recovery_mode = False
@@ -519,7 +527,7 @@ class AutoModeController:
                 if not detections:
                     self.robot.current_state = f'FOLLOWING LANE (Error: {error:.0f}px)'
                 
-                # PID control
+                # ===== 4. PID CONTROL =====
                 current_time = time.time()
                 dt = 0.05
                 
@@ -530,7 +538,7 @@ class AutoModeController:
                 left_speed = max(-255, min(255, int(self.base_speed - correction)))
                 right_speed = max(-255, min(255, int(self.base_speed + correction)))
                 
-                # Send to motors
+                # ===== 5. SEND TO MOTORS =====
                 self.robot.driver.set_motors(left_speed, right_speed)
                 
                 time.sleep(0.03)
@@ -544,28 +552,39 @@ class AutoModeController:
         logger.info("Auto loop ended")
     
     def _perform_lane_recovery(self, frame) -> bool:
-        """Perform lane recovery by scanning left-right"""
+        """
+        Thực hiện tìm kiếm lane bằng cách quét trái-phải
+        
+        Returns:
+            True nếu tìm thấy lane, False nếu chưa
+        """
+        # Kiểm tra xem có bắt được lane trong frame hiện tại không
         error, x_line, center_x, _ = detect_line(frame, self.detection_config)
         
         if abs(error) <= self.MAX_ERROR_THRESHOLD:
+            # Tìm thấy lane!
             return True
         
-        self.recovery_scan_time += 0.05
+        # Tiếp tục quét
+        self.recovery_scan_time += 0.05  # Tăng theo chu kỳ loop (50ms)
         
         if self.recovery_scan_time >= self.recovery_max_scan_time:
+            # Hết thời gian quét theo hướng hiện tại, đổi hướng
             if self.recovery_direction == 'left':
                 logger.info("🔄 Switching recovery scan direction: LEFT → RIGHT")
                 self.recovery_direction = 'right'
             else:
                 logger.info("🔄 Switching recovery scan direction: RIGHT → LEFT")
                 self.recovery_direction = 'left'
-                self.recovery_attempts += 1
+                self.recovery_attempts += 1  # Tăng số lần thử sau khi quét cả 2 hướng
             
             self.recovery_scan_time = 0.0
             
             if self.recovery_attempts >= self.recovery_max_attempts:
+                # Đã thử đủ số lần
                 return False
         
+        # Thực hiện quay để quét
         if self.recovery_direction == 'left':
             self.robot.driver.turn_left(self.recovery_scan_speed)
             self.robot.current_state = f'SCANNING LEFT... ({self.recovery_scan_time:.1f}s)'
@@ -586,19 +605,8 @@ class AutoModeController:
         }
 
 
-# ============================================================
-# IMPROVED FOLLOW MODE CONTROLLER
-# ============================================================
-
 class FollowModeController:
-    """
-    IMPROVED Follow Mode Controller
-    ✅ Target size = 200px (configurable)
-    ✅ Forward if object < 200px (too far)
-    ✅ Backward if object > 200px (too close)
-    ✅ Left/Right centering with PID
-    ✅ Support 4 colors: red, green, blue, yellow
-    """
+    """Follow mode controller using YOLOv11"""
     
     def __init__(self, robot_controller: RobotController):
         self.robot = robot_controller
@@ -606,13 +614,8 @@ class FollowModeController:
         self.thread: Optional[threading.Thread] = None
         self.camera: Optional[CameraManager] = None
         
-        # YOLO detector
-        self.detector = ObjectDetector(
-            model_path='data/models/best_ncnn_model', 
-            conf_threshold=0.5
-        )
+        self.detector = ObjectDetector(model_path='data/models/best_ncnn_model', conf_threshold=0.5)
         
-        # ===== COLOR MAPPING =====
         self.color_map = {
             'red': 'red_color',
             'green': 'green_color',
@@ -620,41 +623,21 @@ class FollowModeController:
             'yellow': 'yellow_color'
         }
         self.target_color_name = 'red'
+        self.pid_turn = PIDController(kp=0.8, ki=0.0, kd=0.3, output_max=255)
         
-        # ===== TARGET SIZE CONTROL =====
-        self.TARGET_SIZE = 350  # 🎯 Kích thước mục tiêu (pixels)
-        self.SIZE_TOLERANCE = 20  # ±20px = dead zone (không điều chỉnh)
+        # ===== TARGET DETECTION THRESHOLDS (FOLLOW MODE) =====
+        self.DIST_PREPARE_FOLLOW = 135   # ✅ Chuẩn bị khi target còn xa (120px)
+        self.DIST_EXECUTE_FOLLOW = 220   # ✅ Thực thi khi target gần (200px)
         
-        # Size zones
-        self.SIZE_MIN = self.TARGET_SIZE - self.SIZE_TOLERANCE  # 180px
-        self.SIZE_MAX = self.TARGET_SIZE + self.SIZE_TOLERANCE  # 220px
+        # --- CẤU HÌNH CAMERA (Calibration) ---
+        self.FOCAL_LENGTH = 310  # Tiêu cự (đã tính ở bài trước)
+        self.OBJECT_WIDTH = 6    # Kích thước vật thể (cm)
         
-        # ===== SPEED SETTINGS =====
-        self.FORWARD_SPEED_MAX = 150   # Tốc độ tiến tối đa (khi object rất xa)
-        self.FORWARD_SPEED_MIN = 80   # Tốc độ tiến tối thiểu (khi gần target)
-        self.BACKWARD_SPEED = 100      # Tốc độ lùi (khi object quá gần)
-        self.TURN_SPEED_MAX = 160      # Tốc độ quay tối đa (khi lệch nhiều)
+        self.SIZE_FORWARD = 0
+        self.SIZE_STOP = 0
+        self.SIZE_BACK = 0
+        self.set_follow_distance(50)
         
-        # ===== PID CONTROLLERS =====
-        # PID cho điều khiển TRÁI/PHẢI (centering)
-        self.pid_horizontal = PIDController(
-            kp=0.3,   # Tăng để phản ứng nhanh hơn
-            ki=0.0,
-            kd=0.05,  # Giảm dao động
-            output_min=-255,
-            output_max=255
-        )
-        
-        # PID cho điều khiển TIẾN/LÙI (distance control)
-        self.pid_distance = PIDController(
-            kp=1.0,   # Điều khiển khoảng cách
-            ki=0.0,  # Xử lý sai số tích lũy
-            kd=0.4,   # Giảm dao động
-            output_min=-self.BACKWARD_SPEED,
-            output_max=self.FORWARD_SPEED_MAX
-        )
-        
-        # ===== TRACKING DATA =====
         self.target_x = 0
         self.target_y = 0
         self.target_w = 0
@@ -662,55 +645,44 @@ class FollowModeController:
         self.confidence = 0
         self.target_distance = 0
         
-        # Latest debug frame
-        self.latest_debug_frame = None
-        
-        logger.info(f"✅ Improved Follow Mode initialized (Target: {self.TARGET_SIZE}px)")
+        logger.info("Follow Mode Controller initialized with YOLO")
     
     def start(self):
         if not self.running:
-            if not self._init_shared_camera():
-                return False
-            
-            self.pid_horizontal.reset()
-            self.pid_distance.reset()
-            
+            if not self._init_shared_camera(): return False
             self.running = True
             self.thread = threading.Thread(target=self._follow_loop, daemon=True)
             self.thread.start()
-            
             logger.info(f"Follow mode started: {self.target_color_name}")
             return True
         return False
     
     def stop(self):
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=2.0)
+        if self.thread: self.thread.join(timeout=2.0)
         self.robot.driver.stop()
         logger.info("Follow mode stopped")
     
     def set_target_color(self, color: str):
-        """Change target color"""
-        if color in self.color_map:
-            self.target_color_name = color
-            logger.info(f"Target color changed to: {color}")
-        else:
-            logger.warning(f"Invalid color: {color}")
+        self.target_color_name = color
+        logger.info(f"Target color changed to: {color}")
     
-    def set_target_size(self, size: int):
-        """
-        Change target size dynamically
-        Args:
-            size: Target size in pixels (e.g., 150, 200, 250)
-        """
-        self.TARGET_SIZE = max(100, min(400, size))  # Clamp 100-400
-        self.SIZE_MIN = self.TARGET_SIZE - self.SIZE_TOLERANCE
-        self.SIZE_MAX = self.TARGET_SIZE + self.SIZE_TOLERANCE
-        logger.info(f"Target size changed to: {self.TARGET_SIZE}px (±{self.SIZE_TOLERANCE}px)")
+    def set_follow_distance(self, distance: int):
+        if distance < 10: distance = 10
+        target_pixel_size = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / distance
+        margin = 10
+        
+        self.SIZE_STOP = int(target_pixel_size)
+        self.SIZE_FORWARD = int(target_pixel_size - margin)
+        self.SIZE_BACK = int(target_pixel_size + margin)
+        
+        logger.info(f"Set Follow Distance: {distance}cm -> Stop Size: {self.SIZE_STOP}px")
     
     def get_target_data(self) -> dict:
-        """Get current tracking data"""
+        current_dist = 0
+        if self.target_w > 0:
+            current_dist = (self.FOCAL_LENGTH * self.OBJECT_WIDTH) / self.target_w
+            
         return {
             'tracking': self.confidence > 0,
             'target_color': self.target_color_name,
@@ -719,61 +691,69 @@ class FollowModeController:
             'target_w': self.target_w,
             'target_h': self.target_h,
             'confidence': self.confidence,
-            'target_size': max(self.target_w, self.target_h) if self.target_w > 0 else 0,
-            'target_size_desired': self.TARGET_SIZE
+            'target_distance': current_dist
         }
-    
-    def get_debug_frame(self):
-        """Get annotated debug frame"""
-        return self.latest_debug_frame
     
     def _init_shared_camera(self) -> bool:
         try:
             self.camera = get_web_camera(self.robot.config)
             if not self.camera.is_running():
-                if not self.camera.start():
-                    return False
+                if not self.camera.start(): return False
             return True
         except Exception as e:
             logger.error(f"Camera init error: {e}")
             return False
 
     def _follow_loop(self):
-        """
-        IMPROVED Follow Loop
-        Sử dụng 2 PID controllers:
-        - PID Horizontal: Điều chỉnh trái/phải (centering)
-        - PID Distance: Điều chỉnh tiến/lùi (maintain target size)
-        """
-        logger.info(f"Follow loop started. Target: {self.color_map.get(self.target_color_name)}")
+        logger.info(f"Follow loop started. Tracking: {self.color_map.get(self.target_color_name)}")
         
         while self.running:
             try:
-                if self.robot.current_mode != 'follow':
-                    break
+                if self.robot.current_mode != 'follow': break
                 
                 frame = self.camera.capture_frame()
                 if frame is None:
-                    time.sleep(0.05)
+                    time.sleep(0.1)
                     continue
                 
-                # Detect objects
-                detections, annotated_frame = self.detector.detect(frame)
-                
-                # Save debug frame
-                self.latest_debug_frame = annotated_frame
-                
-                # Filter by target color
+                detections, _ = self.detector.detect(frame)
                 target_class = self.color_map.get(self.target_color_name)
                 valid_objs = [d for d in detections if d['class_name'] == target_class]
                 
                 if valid_objs:
-                    # Get largest matching object
                     target = max(valid_objs, key=lambda x: x['w'] * x['h'])
                     
-                    # ===== EXTRACT TARGET INFO =====
-                    frame_h, frame_w = frame.shape[:2]
-                    center_x = frame_w / 2
+                    center_x = frame.shape[1] / 2
+                    error_x = center_x - target['x']
+                    turn_output = self.pid_turn.compute(error_x)
+                    
+                    # Lấy kích thước lớn nhất (vì hình vuông 6x6)
+                    obj_size = max(target['w'], target['h'])
+                    
+                    # ===== TARGET SIZE DETECTION LOGIC (FOLLOW MODE) =====
+                    if obj_size < self.DIST_PREPARE_FOLLOW:
+                        # Target còn xa (< 120px) - Tiến nhanh
+                        forward_speed = 220
+                        self.robot.current_state = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) - Far"
+                    
+                    elif obj_size >= self.DIST_PREPARE_FOLLOW and obj_size < self.DIST_EXECUTE_FOLLOW:
+                        # Target trong vùng chuẩn bị (120-200px) - Giảm tốc
+                        forward_speed = 150
+                        self.robot.current_state = f"PREPARING {target['class_name']} ({obj_size:.0f}px) - Medium"
+                    
+                    elif obj_size >= self.DIST_EXECUTE_FOLLOW:
+                        # Target đủ gần (>= 200px) - DỪNG hoặc thực hiện hành động
+                        forward_speed = 0
+                        self.robot.current_state = f"TARGET REACHED {target['class_name']} ({obj_size:.0f}px) - Stop"
+                    
+                    else:
+                        # Fallback (không nên xảy ra)
+                        forward_speed = 0
+                    
+                    left_speed = max(-255, min(255, int(forward_speed + turn_output)))
+                    right_speed = max(-255, min(255, int(forward_speed - turn_output)))
+                    
+                    self.robot.driver.set_motors(left_speed, right_speed)
                     
                     self.target_x = int(target['x'])
                     self.target_y = int(target['y'])
@@ -781,121 +761,11 @@ class FollowModeController:
                     self.target_h = int(target['h'])
                     self.confidence = int(target['conf'] * 100)
                     
-                    # Object size (max dimension)
-                    obj_size = max(self.target_w, self.target_h)
-                    
-                    # ===== PID 1: HORIZONTAL (Left/Right Centering) =====
-                    # Error = target is on the LEFT → need to turn LEFT (negative error)
-                    # Error = target is on the RIGHT → need to turn RIGHT (positive error)
-                    error_horizontal = self.target_x - center_x
-                    turn_correction = self.pid_horizontal.compute(error_horizontal)
-                    
-                    # ===== PID 2: DISTANCE (Forward/Backward) =====
-                    # Error = object too small (far) → need to go FORWARD (negative error)
-                    # Error = object too large (close) → need to go BACKWARD (positive error)
-                    error_distance = obj_size - self.TARGET_SIZE
-                    distance_correction = self.pid_distance.compute(error_distance)
-                    
-                    # ===== DETERMINE MOTION =====
-                    
-                    # 1. Check if within dead zone (no distance adjustment needed)
-                    if self.SIZE_MIN <= obj_size <= self.SIZE_MAX:
-                        # Perfect size - only center horizontally
-                        base_speed = 0
-                        status = f"LOCKED ON {target['class_name']} ({obj_size:.0f}px) ✓"
-                    
-                    elif obj_size < self.SIZE_MIN:
-                        # Too small (too far) - move FORWARD
-                        # Speed proportional to distance error
-                        distance_error = self.TARGET_SIZE - obj_size
-                        base_speed = int(self.FORWARD_SPEED_MIN + 
-                                       (distance_error / self.TARGET_SIZE) * 
-                                       (self.FORWARD_SPEED_MAX - self.FORWARD_SPEED_MIN))
-                        base_speed = min(self.FORWARD_SPEED_MAX, base_speed)
-                        status = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) →"
-                    
-                    else:
-                        # Too large (too close) - move BACKWARD
-                        base_speed = -self.BACKWARD_SPEED
-                        status = f"BACKING FROM {target['class_name']} ({obj_size:.0f}px) ←"
-                    
-                    # 2. Calculate final motor speeds
-                    # Left motor: base_speed - turn_correction
-                    # Right motor: base_speed + turn_correction
-                    # (turn_correction < 0 → turn left, > 0 → turn right)
-                    
-                    left_speed = int(base_speed - turn_correction)
-                    right_speed = int(base_speed + turn_correction)
-                    
-                    # Clamp to valid range
-                    left_speed = max(-255, min(255, left_speed))
-                    right_speed = max(-255, min(255, right_speed))
-                    
-                    # ===== SEND TO MOTORS =====
-                    self.robot.driver.set_motors(left_speed, right_speed)
-                    
-                    # Update status
-                    self.robot.current_state = status
-                    
-                    # ===== DRAW ENHANCED DEBUG INFO =====
-                    if self.latest_debug_frame is not None:
-                        h, w = self.latest_debug_frame.shape[:2]
-                        
-                        # Draw target size zone (green circle)
-                        cv2.circle(self.latest_debug_frame, 
-                                  (int(center_x), int(frame_h / 2)), 
-                                  self.TARGET_SIZE, (0, 255, 0), 2)
-                        cv2.putText(self.latest_debug_frame, 
-                                   f"Target: {self.TARGET_SIZE}px", 
-                                   (int(center_x) - self.TARGET_SIZE + 10, 
-                                    int(frame_h / 2) - self.TARGET_SIZE - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                        
-                        # Draw center line
-                        cv2.line(self.latest_debug_frame, 
-                                (int(center_x), 0), 
-                                (int(center_x), h), 
-                                (0, 255, 255), 1)
-                        
-                        # Draw object to center arrow
-                        cv2.arrowedLine(self.latest_debug_frame,
-                                       (int(center_x), h - 50),
-                                       (self.target_x, h - 50),
-                                       (255, 0, 255), 3, tipLength=0.3)
-                        
-                        # Draw info panel
-                        info_y = 30
-                        info_lines = [
-                            f"Mode: FOLLOW",
-                            f"Target: {self.target_color_name.upper()}",
-                            f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
-                            f"H-Error: {error_horizontal:.0f}px",
-                            f"D-Error: {error_distance:.0f}px",
-                            f"L-Speed: {left_speed:+4d}",
-                            f"R-Speed: {right_speed:+4d}"
-                        ]
-                        
-                        for line in info_lines:
-                            cv2.putText(self.latest_debug_frame, line,
-                                       (10, info_y),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                            info_y += 20
-                
                 else:
-                    # No target found - STOP and SEARCH
                     self.robot.driver.stop()
-                    self.robot.current_state = f"SEARCHING {self.target_color_name.upper()}..."
+                    self.robot.current_state = "SEARCHING..."
                     self.confidence = 0
                     self.target_w = 0
-                    self.target_h = 0
-                    
-                    # Draw search message
-                    if self.latest_debug_frame is not None:
-                        h, w = self.latest_debug_frame.shape[:2]
-                        cv2.putText(self.latest_debug_frame,
-                                   f"SEARCHING {self.target_color_name.upper()}...",
-                                   (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 
                 time.sleep(0.05)
                 

@@ -129,7 +129,7 @@ ai:
     method: 'opencv'             # 'opencv' (Hough), 'adaptive', or 'hybrid'
     
     # Physical Parameters
-    lane_width_cm: 38            # Real lane width in cm
+    lane_width_cm: 23            # Real lane width in cm
     robot_width_cm: 15           # Real robot width in cm
     
     # CRITICAL: Lane width in pixels at 640x480 resolution
@@ -339,7 +339,7 @@ pid_presets:
   
   # Balanced - General purpose (RECOMMENDED)
   balanced:
-    kp: 0.3
+    kp: 0.25
     ki: 0.0
     kd: 0.05
     base_speed: 90  
@@ -405,8 +405,8 @@ logging:
 # VISUAL ODOMETRY (Optional - position estimation from camera)
 # ============================================================================
 visual_odometry:
-  enabled: false                 # Enable visual odometry
-  scale_factor: 0.05             # 1 pixel = 0.05 cm (REQUIRES CALIBRATION!)
+  enabled: true                 # Enable visual odometry
+  scale_factor: 0.0547           # 1 pixel = 0.0547 cm (REQUIRES CALIBRATION!)
   
   # Feature detection (Shi-Tomasi corners)
   max_features: 200              # Maximum number of features to track
@@ -446,8 +446,8 @@ dashboard:
 # ============================================================================
 calibration:
   camera:
-    lane_width_pixels: null      # Set by calibration script
-    scale_factor: null           # cm per pixel
+    lane_width_pixels: 310      # Set by calibration script
+    scale_factor: 0.0547           # cm per pixel
     calibration_date: null       # ISO datetime
   
   motor:

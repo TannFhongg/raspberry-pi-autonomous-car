@@ -1,0 +1,10 @@
+{
+  "roi_top_ratio": 0.25,
+  "roi_bottom_ratio": 1.0,
+  "canny_low": 65,
+  "canny_high": 165,
+  "hough_threshold": 40,
+  "min_line_length": 50,
+  "max_line_gap": 35,
+  "blur_kernel": 7
+}
