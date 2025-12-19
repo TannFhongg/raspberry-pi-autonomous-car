@@ -35,13 +35,13 @@ def detect_line(frame, config=None):
     # ============================================================
     if config is None:
         config = {
-            'roi_top_ratio': 0.35,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
+            'roi_top_ratio': 0.15,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
             'roi_bottom_ratio': 1.0,
-            'canny_low': 40,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
-            'canny_high': 120,           # TĂNG lên 120
-            'hough_threshold': 20,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
-            'min_line_length': 30,       # TĂNG lên 30 (loại nhiễu)
-            'max_line_gap': 20,          # TĂNG lên 20
+            'canny_low': 65,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
+            'canny_high': 165,           # TĂNG lên 120
+            'hough_threshold': 40,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
+            'min_line_length': 50,       # TĂNG lên 30 (loại nhiễu)
+            'max_line_gap': 35,          # TĂNG lên 20
             'blur_kernel': 5,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
         }
 
@@ -217,14 +217,17 @@ def detect_line(frame, config=None):
         # CASE 4: Mất cả 2
         x_line = center_x
         lane_status = "NO_LANE"
-        
+        forced_error = 999
         cv2.putText(frame_debug, "NO LANE DETECTED", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     # ============================================================
     # 7. TÍNH SAI SỐ VÀ VẼ DEBUG
     # ============================================================
-    error = x_line - center_x
+    if lane_status == "NO_LANE":
+        error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
+    else:
+        error = x_line - center_x # Các trường hợp còn lại tính toán bình thường
     
     # Vẽ đường tâm dự đoán (màu tím)
     cv2.line(frame_debug, (x_line, 0), (x_line, height), (255, 0, 255), 3)

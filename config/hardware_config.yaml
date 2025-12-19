@@ -101,7 +101,7 @@ sensors:
       controls:
         FrameRate: 30            # Target frame rate
         ExposureTime: null       # Auto exposure (null = auto, or set microseconds)
-        AnalogueGain: 1.0        # ISO sensitivity (1.0 = normal, increase if dark)
+        AnalogueGain: 1.5        # ISO sensitivity (1.0 = normal, increase if dark)
         
         # Image Quality - Tuned for lane detection
         Brightness: 0.0          # Brightness adjustment (-1.0 to 1.0)
@@ -140,7 +140,7 @@ ai:
     # Region of Interest (ROI) - Trapezoid shape
     # Lower ratio = look closer to robot (better for sharp turns)
     # Higher ratio = look farther ahead (better for straight lines)
-    roi_top_ratio: 0.35          # Start at 35% from top (65% from bottom)
+    roi_top_ratio: 0.15          # Start at 35% from top (65% from bottom)
     roi_bottom_ratio: 1.0        # End at 100% (bottom of image)
     roi_left_ratio: 0.30         # Left boundary at 30% (wider view)
     roi_right_ratio: 0.70        # Right boundary at 70% (wider view)
@@ -148,16 +148,16 @@ ai:
     # ============================================================================
     # CANNY EDGE DETECTION - Tuned for white background + black lines
     # ============================================================================
-    canny_low: 40                # OPTIMIZED: Lower threshold (higher = less sensitive)
-    canny_high: 120              # OPTIMIZED: Upper threshold
+    canny_low: 65                # OPTIMIZED: Lower threshold (higher = less sensitive)
+    canny_high: 165              # OPTIMIZED: Upper threshold
     # NOTE: For darker/noisier conditions, decrease both values by 10
     
     # ============================================================================
     # HOUGH TRANSFORM - Line detection parameters
     # ============================================================================
-    hough_threshold: 20          # Minimum votes to detect line (lower = more sensitive)
-    min_line_length: 30          # Minimum line length in pixels
-    max_line_gap: 20             # Maximum gap between line segments to connect
+    hough_threshold: 40          # Minimum votes to detect line (lower = more sensitive)
+    min_line_length: 50          # Minimum line length in pixels
+    max_line_gap: 35             # Maximum gap between line segments to connect
     
     # Fine-tuning guide:
     # - NO LANE DETECTED? Decrease hough_threshold (20 → 15 → 10)
@@ -260,7 +260,7 @@ lane_following:
   
   pid:
     # Proportional Gain (Response strength)
-    kp: 0.3                      # BASELINE: Good for most conditions
+    kp: 0.25                      # BASELINE: Good for most conditions
     # Effect: Higher = faster response, more aggressive steering
     # Too high: Oscillation, overshooting
     # Too low: Slow response, can't handle sharp turns
@@ -272,7 +272,7 @@ lane_following:
     # Too low: Steady-state error remains
     
     # Derivative Gain (Damping, smoothness)
-    kd: 0.05                      # DAMPING: Reduce oscillation
+    kd: 0.025                      # DAMPING: Reduce oscillation
     # Effect: Predicts future error, smooths response
     # Too high: Sluggish, can amplify noise
     # Too low: Oscillation, jittery movement
@@ -341,7 +341,7 @@ pid_presets:
   balanced:
     kp: 0.25
     ki: 0.0
-    kd: 0.05
+    kd: 0.025
     base_speed: 90  
     note: "Good balance of speed and stability"
   

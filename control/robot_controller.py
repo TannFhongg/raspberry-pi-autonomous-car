@@ -332,7 +332,7 @@ class AutoModeController:
         self.pid = PIDController(
             kp=pid_config.get('kp', 0.25),
             ki=pid_config.get('ki', 0.0),
-            kd=pid_config.get('kd', 0.05),
+            kd=pid_config.get('kd', 0.025),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
@@ -350,7 +350,7 @@ class AutoModeController:
         self.DIST_EXECUTE = 250
         
         # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 150
+        self.MAX_ERROR_THRESHOLD = 130
         self.lane_lost_count = 0
         self.lane_lost_threshold = 5
         
