@@ -330,7 +330,7 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.32),
+            kp=pid_config.get('kp', 0.36),
             ki=pid_config.get('ki', 0.0055),
             kd=pid_config.get('kd', 0.105),
             output_min=pid_config.get('min_output', -255),
@@ -365,6 +365,10 @@ class AutoModeController:
         
         # Smart Recovery: Lưu error cuối cùng khi còn thấy lane
         self.last_valid_error = 0.0
+        
+        # Low-Pass Filter (EMA) để làm mượt error
+        self.filtered_error = 0.0
+        self.smoothing_factor = 0.5  # Hệ số làm mượt (0.0-1.0)
         
         self.latest_debug_frame = None
         self.latest_error = 0
@@ -407,7 +411,7 @@ class AutoModeController:
             return False
     
     def _auto_loop(self):
-        """Auto loop - Lane following with sign detection"""
+        """Auto loop - Lane following with sign detection (optimized: no bounding box drawing)"""
         logger.info("Auto loop started")
         
         while self.running:
@@ -420,8 +424,8 @@ class AutoModeController:
                     time.sleep(0.1)
                     continue
                 
-                # Detect traffic signs
-                detections, debug_frame = self.detector.detect(frame)
+                # Detect traffic signs (logic only, no drawing)
+                detections, _ = self.detector.detect(frame)
                 sign_action = None
                 
                 if detections:
@@ -470,19 +474,23 @@ class AutoModeController:
                     continue
                 
                 # Lane detection
-                error, x_line, center_x, lane_debug_frame = detect_line(
+                raw_error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
-                self.latest_debug_frame = lane_debug_frame
-                self.latest_error = error
                 
-                # Lane validity check
-                is_lane_valid = abs(error) <= self.MAX_ERROR_THRESHOLD
+                # Resize lane debug frame to 320x240 for reduced lag
+                if lane_debug_frame is not None:
+                    self.latest_debug_frame = cv2.resize(lane_debug_frame, (320, 240))
+                else:
+                    self.latest_debug_frame = None
+                
+                # Lane validity check (dùng raw_error để phản ứng nhanh khi mất lane)
+                is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
                 
                 if not is_lane_valid:
                     self.lane_lost_count += 1
                     
-                    logger.warning(f"⚠️ Lane lost! Error: {error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
+                    logger.warning(f"⚠️ Lane lost! Error: {raw_error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
                     
                     if self.lane_lost_count >= self.lane_lost_threshold:
                         if not self.recovery_mode:
@@ -521,7 +529,7 @@ class AutoModeController:
                         continue
                 
                 # Lane found - Cập nhật last_valid_error cho Smart Recovery
-                self.last_valid_error = error
+                self.last_valid_error = raw_error
                 self.lane_lost_count = 0
                 
                 if self.recovery_mode:
@@ -530,14 +538,20 @@ class AutoModeController:
                     self.robot.driver.stop()
                     time.sleep(0.2)
                 
-                if not detections:
-                    self.robot.current_state = f'FOLLOWING LANE (Error: {error:.0f}px)'
+                # Áp dụng Low-Pass Filter (EMA) để làm mượt error
+                self.filtered_error = (self.smoothing_factor * raw_error) + ((1 - self.smoothing_factor) * self.filtered_error)
                 
-                # PID control
+                # Cập nhật latest_error bằng giá trị đã lọc (hiển thị Dashboard mượt hơn)
+                self.latest_error = int(self.filtered_error)
+                
+                if not detections:
+                    self.robot.current_state = f'FOLLOWING LANE (Error: {self.latest_error:.0f}px)'
+                
+                # PID control (sử dụng filtered_error thay vì raw_error)
                 current_time = time.time()
                 dt = 0.05
                 
-                correction = self.pid.compute(error, dt)
+                correction = self.pid.compute(self.filtered_error, dt)
                 self.latest_correction = correction
                 
                 # Calculate motor speeds

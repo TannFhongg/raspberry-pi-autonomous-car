@@ -9,12 +9,10 @@ from flask import Flask, render_template, Response, jsonify, request
 from flask_socketio import SocketIO, emit
 from datetime import datetime
 import cv2
-import numpy as np
 import yaml
 import logging
 import sys
 import os
-import time
 from pathlib import Path
 
 # Add project root to path
@@ -181,68 +179,6 @@ def video_feed():
 
         traceback.print_exc()
         return "Camera error", 500
-
-
-@app.route("/debug_feed")
-def debug_feed():
-    """
-    Debug video feed - shows processed frame based on current mode
-    Auto Mode: Lane detection debug frame (resized 320x240)
-    Follow Mode: Object tracking debug frame
-    Manual Mode: Raw camera frame
-    """
-    def generate_debug_frames():
-        # Ensure camera is started
-        try:
-            camera = get_web_camera(config)
-            if not camera.is_running():
-                camera.start()
-        except Exception as e:
-            logger.error(f"Failed to init camera for debug feed: {e}")
-        
-        while True:
-            try:
-                frame = None
-                
-                # Get debug frame based on current mode
-                if robot_controller and robot_controller.current_mode == 'auto' and auto_controller:
-                    frame = auto_controller.latest_debug_frame
-                elif robot_controller and robot_controller.current_mode == 'follow' and follow_controller:
-                    frame = follow_controller.latest_debug_frame
-                
-                # Fallback to raw camera if no debug frame available
-                if frame is None:
-                    try:
-                        camera = get_web_camera(config)
-                        if camera.is_running():
-                            frame = camera.capture_frame()
-                            if frame is not None:
-                                frame = cv2.resize(frame, (320, 240))
-                    except Exception:
-                        pass
-                
-                # Create placeholder if still no frame
-                if frame is None:
-                    frame = np.zeros((240, 320, 3), dtype=np.uint8)
-                    cv2.putText(frame, "Waiting for camera...", (50, 120),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                
-                # Encode to JPEG
-                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                
-                time.sleep(0.05)  # ~20 FPS
-                
-            except Exception as e:
-                logger.error(f"Debug feed error: {e}")
-                time.sleep(0.1)
-    
-    return Response(
-        generate_debug_frames(),
-        mimetype="multipart/x-mixed-replace; boundary=frame",
-    )
 
 
 # ===== MODE CONTROL =====

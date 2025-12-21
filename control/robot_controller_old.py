@@ -330,9 +330,9 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.25),
-            ki=pid_config.get('ki', 0.0),
-            kd=pid_config.get('kd', 0.025),
+            kp=pid_config.get('kp', 0.36),
+            ki=pid_config.get('ki', 0.0055),
+            kd=pid_config.get('kd', 0.105),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
@@ -350,7 +350,7 @@ class AutoModeController:
         self.DIST_EXECUTE = 250
         
         # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 130
+        self.MAX_ERROR_THRESHOLD = 95
         self.lane_lost_count = 0
         self.lane_lost_threshold = 5
         
@@ -362,6 +362,9 @@ class AutoModeController:
         self.recovery_max_scan_time = 3.0
         self.recovery_attempts = 0
         self.recovery_max_attempts = 2
+        
+        # Smart Recovery: Lưu error cuối cùng khi còn thấy lane
+        self.last_valid_error = 0.0
         
         self.latest_debug_frame = None
         self.latest_error = 0
@@ -404,7 +407,7 @@ class AutoModeController:
             return False
     
     def _auto_loop(self):
-        """Auto loop - Lane following with sign detection"""
+        """Auto loop - Lane following with sign detection (optimized: no bounding box drawing)"""
         logger.info("Auto loop started")
         
         while self.running:
@@ -417,8 +420,8 @@ class AutoModeController:
                     time.sleep(0.1)
                     continue
                 
-                # Detect traffic signs
-                detections, debug_frame = self.detector.detect(frame)
+                # Detect traffic signs (logic only, no drawing)
+                detections, _ = self.detector.detect(frame)
                 sign_action = None
                 
                 if detections:
@@ -446,11 +449,13 @@ class AutoModeController:
                         elif sign_name == 'left_turn_sign':
                             logger.info("⬅️ Detected Left Turn Sign -> Smart Turn +90°")
                             self.robot.smart_turn(90, speed=220)
+                            self.pid.reset()
                             continue
                         
                         elif sign_name == 'right_turn_sign':
                             logger.info("➡️ Detected Right Turn Sign -> Smart Turn -90°")
                             self.robot.smart_turn(-90, speed=220)
+                            self.pid.reset()
                             continue
                         
                         elif sign_name == 'speed_limit_signs':
@@ -468,7 +473,13 @@ class AutoModeController:
                 error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
-                self.latest_debug_frame = lane_debug_frame
+                
+                # Resize lane debug frame to 320x240 for reduced lag
+                if lane_debug_frame is not None:
+                    self.latest_debug_frame = cv2.resize(lane_debug_frame, (320, 240))
+                else:
+                    self.latest_debug_frame = None
+                
                 self.latest_error = error
                 
                 # Lane validity check
@@ -481,11 +492,19 @@ class AutoModeController:
                     
                     if self.lane_lost_count >= self.lane_lost_threshold:
                         if not self.recovery_mode:
-                            logger.info("🔍 RECOVERY MODE ACTIVATED - Scanning for lane...")
+                            # ===== SMART RECOVERY: Quyết định hướng quay dựa trên last_valid_error =====
+                            if self.last_valid_error < 0:
+                                # Làn đường nằm bên TRÁI → quay TRÁI trước
+                                self.recovery_direction = 'left'
+                                logger.info(f"🔍 SMART RECOVERY: Last error={self.last_valid_error:.0f}px (LEFT) → Scan LEFT first")
+                            else:
+                                # Làn đường nằm bên PHẢI → quay PHẢI trước
+                                self.recovery_direction = 'right'
+                                logger.info(f"🔍 SMART RECOVERY: Last error={self.last_valid_error:.0f}px (RIGHT) → Scan RIGHT first")
+                            
                             self.recovery_mode = True
                             self.recovery_scan_time = 0.0
                             self.recovery_attempts = 0
-                            self.recovery_direction = 'left'
                         
                         lane_found = self._perform_lane_recovery(frame)
                         
@@ -507,7 +526,8 @@ class AutoModeController:
                         time.sleep(0.05)
                         continue
                 
-                # Lane found
+                # Lane found - Cập nhật last_valid_error cho Smart Recovery
+                self.last_valid_error = error
                 self.lane_lost_count = 0
                 
                 if self.recovery_mode:
@@ -824,8 +844,8 @@ class FollowModeController:
                     # Right motor: base_speed + turn_correction
                     # (turn_correction < 0 → turn left, > 0 → turn right)
                     
-                    left_speed = int(base_speed - turn_correction)
-                    right_speed = int(base_speed + turn_correction)
+                    left_speed = int(base_speed + turn_correction)
+                    right_speed = int(base_speed - turn_correction)
                     
                     # Clamp to valid range
                     left_speed = max(-255, min(255, left_speed))

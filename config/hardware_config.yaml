@@ -260,7 +260,7 @@ lane_following:
   
   pid:
     # Proportional Gain (Response strength)
-    kp: 0.32                      # BASELINE: Good for most conditions
+    kp: 0.36                      # BASELINE: Good for most conditions
     # Effect: Higher = faster response, more aggressive steering
     # Too high: Oscillation, overshooting
     # Too low: Slow response, can't handle sharp turns
@@ -339,7 +339,7 @@ pid_presets:
   
   # Balanced - General purpose (RECOMMENDED)
   balanced:
-    kp: 0.32
+    kp: 0.36
     ki: 0.0055
     kd: 0.105
     base_speed: 90  
