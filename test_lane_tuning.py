@@ -143,8 +143,8 @@ def detect_lane(frame, config):
     
     roi_vertices = np.array([[
         (0, roi_bottom),
-        (int(width * 0.25), roi_top),
-        (int(width * 0.75), roi_top),
+        (int(width * 0.3), roi_top),
+        (int(width * 0.7), roi_top),
         (width, roi_bottom)
     ]], dtype=np.int32)
     

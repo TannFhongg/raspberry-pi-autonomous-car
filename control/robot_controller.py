@@ -330,9 +330,9 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.25),
-            ki=pid_config.get('ki', 0.0),
-            kd=pid_config.get('kd', 0.025),
+            kp=pid_config.get('kp', 0.32),
+            ki=pid_config.get('ki', 0.005),
+            kd=pid_config.get('kd', 0.08),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
@@ -362,6 +362,9 @@ class AutoModeController:
         self.recovery_max_scan_time = 3.0
         self.recovery_attempts = 0
         self.recovery_max_attempts = 2
+        
+        # Smart Recovery: Lưu error cuối cùng khi còn thấy lane
+        self.last_valid_error = 0.0
         
         self.latest_debug_frame = None
         self.latest_error = 0
@@ -446,11 +449,13 @@ class AutoModeController:
                         elif sign_name == 'left_turn_sign':
                             logger.info("⬅️ Detected Left Turn Sign -> Smart Turn +90°")
                             self.robot.smart_turn(90, speed=220)
+                            self.pid.reset()
                             continue
                         
                         elif sign_name == 'right_turn_sign':
                             logger.info("➡️ Detected Right Turn Sign -> Smart Turn -90°")
                             self.robot.smart_turn(-90, speed=220)
+                            self.pid.reset()
                             continue
                         
                         elif sign_name == 'speed_limit_signs':
@@ -481,11 +486,19 @@ class AutoModeController:
                     
                     if self.lane_lost_count >= self.lane_lost_threshold:
                         if not self.recovery_mode:
-                            logger.info("🔍 RECOVERY MODE ACTIVATED - Scanning for lane...")
+                            # ===== SMART RECOVERY: Quyết định hướng quay dựa trên last_valid_error =====
+                            if self.last_valid_error < 0:
+                                # Làn đường nằm bên TRÁI → quay TRÁI trước
+                                self.recovery_direction = 'left'
+                                logger.info(f"🔍 SMART RECOVERY: Last error={self.last_valid_error:.0f}px (LEFT) → Scan LEFT first")
+                            else:
+                                # Làn đường nằm bên PHẢI → quay PHẢI trước
+                                self.recovery_direction = 'right'
+                                logger.info(f"🔍 SMART RECOVERY: Last error={self.last_valid_error:.0f}px (RIGHT) → Scan RIGHT first")
+                            
                             self.recovery_mode = True
                             self.recovery_scan_time = 0.0
                             self.recovery_attempts = 0
-                            self.recovery_direction = 'left'
                         
                         lane_found = self._perform_lane_recovery(frame)
                         
@@ -507,7 +520,8 @@ class AutoModeController:
                         time.sleep(0.05)
                         continue
                 
-                # Lane found
+                # Lane found - Cập nhật last_valid_error cho Smart Recovery
+                self.last_valid_error = error
                 self.lane_lost_count = 0
                 
                 if self.recovery_mode:
@@ -824,8 +838,8 @@ class FollowModeController:
                     # Right motor: base_speed + turn_correction
                     # (turn_correction < 0 → turn left, > 0 → turn right)
                     
-                    left_speed = int(base_speed - turn_correction)
-                    right_speed = int(base_speed + turn_correction)
+                    left_speed = int(base_speed + turn_correction)
+                    right_speed = int(base_speed - turn_correction)
                     
                     # Clamp to valid range
                     left_speed = max(-255, min(255, left_speed))
