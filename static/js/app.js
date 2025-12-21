@@ -456,7 +456,7 @@ document.addEventListener('keydown', function (event) {
     if (currentMode !== 'manual') {
         return;
     }
-
+    if (event.repeat) return;
     switch (event.key) {
         case 'ArrowUp':
         case 'w':

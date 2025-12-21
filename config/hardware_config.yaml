@@ -101,7 +101,7 @@ sensors:
       controls:
         FrameRate: 30            # Target frame rate
         ExposureTime: null       # Auto exposure (null = auto, or set microseconds)
-        AnalogueGain: 4.0        # ISO sensitivity (1.0 = normal, increase if dark)
+        #AnalogueGain: 4.0        # ISO sensitivity (1.0 = normal, increase if dark)
         
         # Image Quality - Tuned for lane detection
         Brightness: 0.0          # Brightness adjustment (-1.0 to 1.0)
