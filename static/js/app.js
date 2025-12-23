@@ -596,14 +596,7 @@ async function updateOdometryStatus() {
             const qualityBadge = document.getElementById('vo-quality');
             const quality = data.quality;
             qualityBadge.textContent = quality.toFixed(2);
-
-            if (quality > 0.7) {
-                qualityBadge.className = 'badge badge-success';
-            } else if (quality > 0.4) {
-                qualityBadge.className = 'badge badge-warning';
-            } else {
-                qualityBadge.className = 'badge badge-danger';
-            }
+            qualityBadge.className = 'text-dark font-weight-bold';
 
             document.getElementById('vo-pos-x').textContent =
                 data.position.x_cm.toFixed(1);

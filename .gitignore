@@ -14,7 +14,8 @@ models/
 
 # Logs
 *.log
-
+# Json 
+*.json
 # Build files
 build/
 dist/

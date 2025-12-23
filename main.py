@@ -187,9 +187,9 @@ def video_feed():
 def debug_feed():
     """
     Debug video feed - shows processed frame based on current mode
+    Manual Mode: VO trajectory map (if available) or raw camera
     Auto Mode: Lane detection debug frame (resized 320x240)
     Follow Mode: Object tracking debug frame
-    Manual Mode: Raw camera frame
     """
     def generate_debug_frames():
         # Ensure camera is started
@@ -205,10 +205,22 @@ def debug_feed():
                 frame = None
                 
                 # Get debug frame based on current mode
-                if robot_controller and robot_controller.current_mode == 'auto' and auto_controller:
-                    frame = auto_controller.latest_debug_frame
-                elif robot_controller and robot_controller.current_mode == 'follow' and follow_controller:
-                    frame = follow_controller.latest_debug_frame
+                if robot_controller:
+                    current_mode = robot_controller.current_mode
+                    
+                    if current_mode == 'manual':
+                        # Manual mode: Ưu tiên hiển thị VO map
+                        vo_map = robot_controller.get_vo_map()
+                        if vo_map is not None:
+                            frame = vo_map
+                    
+                    elif current_mode == 'auto' and auto_controller:
+                        # Auto mode: Lane detection debug
+                        frame = auto_controller.latest_debug_frame
+                    
+                    elif current_mode == 'follow' and follow_controller:
+                        # Follow mode: Object tracking debug
+                        frame = follow_controller.latest_debug_frame
                 
                 # Fallback to raw camera if no debug frame available
                 if frame is None:
@@ -479,22 +491,23 @@ def get_odometry_status():
             }), 404
         
         status = robot_controller.vo.get_status()
+        velocity = robot_controller.vo.get_velocity()
         
         return jsonify({
             'enabled': True,
-            'distance_cm': status['position_y_cm'],
+            'distance_cm': float(status['position_y_cm']),
             'position': {
-                'x_cm': status['position_x_cm'],
-                'y_cm': status['position_y_cm']
+                'x_cm': float(status['position_x_cm']),
+                'y_cm': float(status['position_y_cm'])
             },
             'velocity': {
-                'x_cm_s': robot_controller.vo.get_velocity()[0],
-                'y_cm_s': robot_controller.vo.get_velocity()[1]
+                'x_cm_s': float(velocity[0]),
+                'y_cm_s': float(velocity[1])
             },
-            'quality': status['tracking_quality'],
-            'is_tracking_good': status['is_tracking_good'],
-            'num_features': status['num_features'],
-            'scale_factor': status['scale_factor']
+            'quality': float(status['tracking_quality']),
+            'is_tracking_good': bool(status['is_tracking_good']),
+            'num_features': int(status['num_features']),
+            'scale_factor': float(status['scale_factor'])
         })
     
     except Exception as e:

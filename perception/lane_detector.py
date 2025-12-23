@@ -35,11 +35,11 @@ def detect_line(frame, config=None):
     # ============================================================
     if config is None:
         config = {
-            'roi_top_ratio': 0.15,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
+            'roi_top_ratio': 0.3,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
             'roi_bottom_ratio': 1.0,
             'canny_low': 65,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
             'canny_high': 165,           # TĂNG lên 120
-            'hough_threshold': 40,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
+            'hough_threshold': 75,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
             'min_line_length': 50,       # TĂNG lên 30 (loại nhiễu)
             'max_line_gap': 35,          # TĂNG lên 20
             'blur_kernel': 5,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
@@ -56,7 +56,7 @@ def detect_line(frame, config=None):
     # - Tại đáy ảnh (gần xe), 38cm lane ≈ 200-250 pixels
     # QUAN TRỌNG: Cần chạy calibration để lấy số chính xác!
     
-    LANE_WIDTH_PIXELS = 310  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
+    LANE_WIDTH_PIXELS = 245  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
     
     # Debug frame
     frame_debug = frame.copy()
@@ -92,7 +92,7 @@ def detect_line(frame, config=None):
     roi_vertices = np.array([[
         (0, roi_bottom),
         (int(width * 0.30), roi_top),  # MỞ RỘNG: 30% thay vì 35%
-        (int(width * 0.70), roi_top),  # MỞ RỘNG: 70% thay vì 65%
+        (int(width * 0.9), roi_top),  # MỞ RỘNG: 70% thay vì 65%
         (width, roi_bottom)
     ]], dtype=np.int32)
     
@@ -224,10 +224,11 @@ def detect_line(frame, config=None):
     # ============================================================
     # 7. TÍNH SAI SỐ VÀ VẼ DEBUG
     # ============================================================
+    CAMERA_OFFSET = -25  # Hiệu chỉnh nếu camera không đặt chính giữa robot
     if lane_status == "NO_LANE":
         error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
     else:
-        error = x_line - center_x # Các trường hợp còn lại tính toán bình thường
+        error = x_line - center_x + CAMERA_OFFSET  # Các trường hợp còn lại tính toán bình thường
     
     # Vẽ đường tâm dự đoán (màu tím)
     cv2.line(frame_debug, (x_line, 0), (x_line, height), (255, 0, 255), 3)

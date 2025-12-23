@@ -66,11 +66,17 @@ class RobotController:
             logger.error(f"❌ IMU initialization failed: {e}")
             self.imu = None
 
-        # Visual Odometry
+        # Visual Odometry (chạy ngầm, chỉ hoạt động khi manual mode)
         vo_config = config.get('visual_odometry', {})
         scale = vo_config.get('scale_factor', 0.05)
         self.vo = VisualOdometry(scale_factor=scale)
-        logger.info("✅ Visual Odometry initialized")
+        self.vo_map = None  # Ảnh bản đồ trajectory
+        self.vo_camera = None  # Camera riêng cho VO
+        
+        # Start VO background thread
+        self.vo_thread = threading.Thread(target=self._vo_loop, daemon=True)
+        self.vo_thread.start()
+        logger.info("✅ Visual Odometry initialized (background thread)")
 
         logger.info("Robot Controller initialized")
     
@@ -281,25 +287,61 @@ class RobotController:
                 if left == 0 and right == 0:
                     self.current_state = 'IDLE'
 
-    def update_odometry(self, frame):
-        """Update visual odometry"""
-        if not hasattr(self, 'vo') or self.vo is None:
-            return {'error': 'VO not initialized'}
+    def _vo_loop(self):
+        """
+        Visual Odometry background loop
+        CHỈ chạy khi mode == 'manual' để tiết kiệm CPU
+        """
+        logger.info("🔄 VO background thread started")
+        
+        while self.running:
+            try:
+                if self.current_mode == 'manual':
+                    # Lấy camera (lazy init)
+                    if self.vo_camera is None:
+                        try:
+                            self.vo_camera = get_web_camera(self.config)
+                            if not self.vo_camera.is_running():
+                                self.vo_camera.start()
+                        except Exception as e:
+                            logger.error(f"❌ VO camera init error: {e}")
+                            time.sleep(1.0)
+                            continue
+                    
+                    # Capture frame
+                    frame = self.vo_camera.capture_frame()
+                    if frame is not None:
+                        # Resize xuống 320x240 để VO chạy nhanh
+                        frame_small = cv2.resize(frame, (320, 240))
+                        
+                        # Process frame (VO nhận BGR, tự convert sang grayscale)
+                        self.vo.process_frame(frame_small)
+                        
+                        # Vẽ debug frame với features
+                        self.vo_map = self.vo.draw_features(frame_small)
+                    
+                    time.sleep(0.1)  # ~10 FPS cho VO
+                    
+                else:
+                    # Không phải manual mode -> ngủ dài để tiết kiệm CPU
+                    self.vo_map = None  # Clear map khi không dùng
+                    time.sleep(1.0)
+                    
+            except Exception as e:
+                logger.error(f"❌ VO loop error: {e}")
+                time.sleep(1.0)
+        
+        logger.info("🔄 VO background thread stopped")
 
-        try:
-            dx, dy = self.vo.process_frame(frame)
-            status = self.vo.get_status()
-            status['dx'] = dx
-            status['dy'] = dy
-            return status
-        except Exception as e:
-            logger.error(f"❌ VO update error: {e}")
-            return {'error': str(e)}
+    def get_vo_map(self):
+        """Get current VO trajectory map (for display in manual mode)"""
+        return self.vo_map
 
     def reset_odometry(self):
         """Reset visual odometry tracking"""
         if hasattr(self, 'vo') and self.vo is not None:
             self.vo.reset()
+            self.vo_map = None
             logger.info("🔄 Visual Odometry reset")
 
     def cleanup(self):
@@ -328,26 +370,28 @@ class AutoModeController:
             conf_threshold=0.5
         )
         
+        # PID config - Giá trị mặc định khớp với hardware_config.yaml
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.36),
-            ki=pid_config.get('ki', 0.0055),
-            kd=pid_config.get('kd', 0.105),
+            kp=pid_config.get('kp', 0.3),              # Khớp với hardware_config.yaml
+            ki=pid_config.get('ki', 0.0),              # Khớp với hardware_config.yaml
+            kd=pid_config.get('kd', 0.05),             # Khớp với hardware_config.yaml
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
-            derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
+            derivative_smoothing=pid_config.get('derivative_smoothing', 0.8)
         )
         
+        # Speed config - Giá trị mặc định khớp với hardware_config.yaml
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 100)
+        self.base_speed = lane_config.get('base_speed', 90)    # Khớp với hardware_config.yaml
         self.default_speed = self.base_speed
-        self.max_speed = lane_config.get('max_speed', 255)
-        self.min_speed = lane_config.get('min_speed', 60)
+        self.max_speed = lane_config.get('max_speed', 255)     # Khớp với hardware_config.yaml
+        self.min_speed = lane_config.get('min_speed', 80)      # Khớp với hardware_config.yaml
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
         # Sign detection thresholds
         self.DIST_PREPARE = 130
-        self.DIST_EXECUTE = 250
+        self.DIST_EXECUTE = 350
         
         # Lane detection thresholds
         self.MAX_ERROR_THRESHOLD = 95
@@ -357,7 +401,7 @@ class AutoModeController:
         # Lane Recovery System
         self.recovery_mode = False
         self.recovery_direction = 'left'
-        self.recovery_scan_speed = 130
+        self.recovery_scan_speed = 160
         self.recovery_scan_time = 0.0
         self.recovery_max_scan_time = 3.0
         self.recovery_attempts = 0
@@ -621,9 +665,9 @@ class AutoModeController:
 class FollowModeController:
     """
     IMPROVED Follow Mode Controller
-    ✅ Target size = 200px (configurable)
-    ✅ Forward if object < 200px (too far)
-    ✅ Backward if object > 200px (too close)
+    ✅ Target size configurable from hardware_config.yaml
+    ✅ Forward if object < target_size (too far)
+    ✅ Backward if object > target_size (too close)
     ✅ Left/Right centering with PID
     ✅ Support 4 colors: red, green, blue, yellow
     """
@@ -649,35 +693,40 @@ class FollowModeController:
         }
         self.target_color_name = 'red'
         
-        # ===== TARGET SIZE CONTROL =====
-        self.TARGET_SIZE = 350  # 🎯 Kích thước mục tiêu (pixels)
-        self.SIZE_TOLERANCE = 20  # ±20px = dead zone (không điều chỉnh)
+        # ===== LOAD CONFIG FROM hardware_config.yaml =====
+        follow_config = robot_controller.config.get('follow_mode', {})
+        
+        # Target size control - Đọc từ config
+        self.TARGET_SIZE = follow_config.get('target_size', 350)
+        self.SIZE_TOLERANCE = follow_config.get('size_tolerance', 20)
         
         # Size zones
         self.SIZE_MIN = self.TARGET_SIZE - self.SIZE_TOLERANCE  # 180px
         self.SIZE_MAX = self.TARGET_SIZE + self.SIZE_TOLERANCE  # 220px
         
-        # ===== SPEED SETTINGS =====
-        self.FORWARD_SPEED_MAX = 150   # Tốc độ tiến tối đa (khi object rất xa)
-        self.FORWARD_SPEED_MIN = 80   # Tốc độ tiến tối thiểu (khi gần target)
-        self.BACKWARD_SPEED = 100      # Tốc độ lùi (khi object quá gần)
-        self.TURN_SPEED_MAX = 160      # Tốc độ quay tối đa (khi lệch nhiều)
+        # ===== SPEED SETTINGS - Đọc từ config =====
+        self.FORWARD_SPEED_MAX = follow_config.get('forward_speed_max', 150)
+        self.FORWARD_SPEED_MIN = follow_config.get('forward_speed_min', 80)
+        self.BACKWARD_SPEED = follow_config.get('backward_speed', 100)
+        self.TURN_SPEED_MAX = follow_config.get('turn_speed_max', 160)
         
-        # ===== PID CONTROLLERS =====
+        # ===== PID CONTROLLERS - Đọc từ config =====
         # PID cho điều khiển TRÁI/PHẢI (centering)
+        pid_h_config = follow_config.get('pid_horizontal', {})
         self.pid_horizontal = PIDController(
-            kp=0.3,   # Tăng để phản ứng nhanh hơn
-            ki=0.0,
-            kd=0.05,  # Giảm dao động
+            kp=pid_h_config.get('kp', 0.3),
+            ki=pid_h_config.get('ki', 0.0),
+            kd=pid_h_config.get('kd', 0.05),
             output_min=-255,
             output_max=255
         )
         
         # PID cho điều khiển TIẾN/LÙI (distance control)
+        pid_d_config = follow_config.get('pid_distance', {})
         self.pid_distance = PIDController(
-            kp=1.0,   # Điều khiển khoảng cách
-            ki=0.0,  # Xử lý sai số tích lũy
-            kd=0.4,   # Giảm dao động
+            kp=pid_d_config.get('kp', 1.0),
+            ki=pid_d_config.get('ki', 0.0),
+            kd=pid_d_config.get('kd', 0.4),
             output_min=-self.BACKWARD_SPEED,
             output_max=self.FORWARD_SPEED_MAX
         )

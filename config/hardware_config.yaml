@@ -135,12 +135,12 @@ ai:
     # CRITICAL: Lane width in pixels at 640x480 resolution
     # ⚠️ MUST BE CALIBRATED using test_lane_optimized.py (Option 1)
     # Default value is estimated, actual value depends on camera height/angle
-    lane_width_pixels: 310       # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
+    lane_width_pixels: 245      # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
     
     # Region of Interest (ROI) - Trapezoid shape
     # Lower ratio = look closer to robot (better for sharp turns)
     # Higher ratio = look farther ahead (better for straight lines)
-    roi_top_ratio: 0.15          # Start at 35% from top (65% from bottom)
+    roi_top_ratio: 0.3          # Start at 35% from top (65% from bottom)
     roi_bottom_ratio: 1.0        # End at 100% (bottom of image)
     roi_left_ratio: 0.30         # Left boundary at 30% (wider view)
     roi_right_ratio: 0.70        # Right boundary at 70% (wider view)
@@ -155,7 +155,7 @@ ai:
     # ============================================================================
     # HOUGH TRANSFORM - Line detection parameters
     # ============================================================================
-    hough_threshold: 40          # Minimum votes to detect line (lower = more sensitive)
+    hough_threshold: 75          # Minimum votes to detect line (lower = more sensitive)
     min_line_length: 50          # Minimum line length in pixels
     max_line_gap: 35             # Maximum gap between line segments to connect
     
@@ -446,7 +446,7 @@ dashboard:
 # ============================================================================
 calibration:
   camera:
-    lane_width_pixels: 310      # Set by calibration script
+    lane_width_pixels: 245      # Set by calibration script
     scale_factor: 0.0547           # cm per pixel
     calibration_date: null       # ISO datetime
   

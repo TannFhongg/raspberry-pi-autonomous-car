@@ -66,11 +66,17 @@ class RobotController:
             logger.error(f"❌ IMU initialization failed: {e}")
             self.imu = None
 
-        # Visual Odometry
+        # Visual Odometry (chạy ngầm, chỉ hoạt động khi manual mode)
         vo_config = config.get('visual_odometry', {})
         scale = vo_config.get('scale_factor', 0.05)
         self.vo = VisualOdometry(scale_factor=scale)
-        logger.info("✅ Visual Odometry initialized")
+        self.vo_map = None  # Ảnh bản đồ trajectory
+        self.vo_camera = None  # Camera riêng cho VO
+        
+        # Start VO background thread
+        self.vo_thread = threading.Thread(target=self._vo_loop, daemon=True)
+        self.vo_thread.start()
+        logger.info("✅ Visual Odometry initialized (background thread)")
 
         logger.info("Robot Controller initialized")
     
@@ -281,25 +287,61 @@ class RobotController:
                 if left == 0 and right == 0:
                     self.current_state = 'IDLE'
 
-    def update_odometry(self, frame):
-        """Update visual odometry"""
-        if not hasattr(self, 'vo') or self.vo is None:
-            return {'error': 'VO not initialized'}
+    def _vo_loop(self):
+        """
+        Visual Odometry background loop
+        CHỈ chạy khi mode == 'manual' để tiết kiệm CPU
+        """
+        logger.info("🔄 VO background thread started")
+        
+        while self.running:
+            try:
+                if self.current_mode == 'manual':
+                    # Lấy camera (lazy init)
+                    if self.vo_camera is None:
+                        try:
+                            self.vo_camera = get_web_camera(self.config)
+                            if not self.vo_camera.is_running():
+                                self.vo_camera.start()
+                        except Exception as e:
+                            logger.error(f"❌ VO camera init error: {e}")
+                            time.sleep(1.0)
+                            continue
+                    
+                    # Capture frame
+                    frame = self.vo_camera.capture_frame()
+                    if frame is not None:
+                        # Resize xuống 320x240 để VO chạy nhanh
+                        frame_small = cv2.resize(frame, (320, 240))
+                        
+                        # Process frame (VO nhận BGR, tự convert sang grayscale)
+                        self.vo.process_frame(frame_small)
+                        
+                        # Vẽ debug frame với features
+                        self.vo_map = self.vo.draw_features(frame_small)
+                    
+                    time.sleep(0.1)  # ~10 FPS cho VO
+                    
+                else:
+                    # Không phải manual mode -> ngủ dài để tiết kiệm CPU
+                    self.vo_map = None  # Clear map khi không dùng
+                    time.sleep(1.0)
+                    
+            except Exception as e:
+                logger.error(f"❌ VO loop error: {e}")
+                time.sleep(1.0)
+        
+        logger.info("🔄 VO background thread stopped")
 
-        try:
-            dx, dy = self.vo.process_frame(frame)
-            status = self.vo.get_status()
-            status['dx'] = dx
-            status['dy'] = dy
-            return status
-        except Exception as e:
-            logger.error(f"❌ VO update error: {e}")
-            return {'error': str(e)}
+    def get_vo_map(self):
+        """Get current VO trajectory map (for display in manual mode)"""
+        return self.vo_map
 
     def reset_odometry(self):
         """Reset visual odometry tracking"""
         if hasattr(self, 'vo') and self.vo is not None:
             self.vo.reset()
+            self.vo_map = None
             logger.info("🔄 Visual Odometry reset")
 
     def cleanup(self):
@@ -330,16 +372,16 @@ class AutoModeController:
         
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.36),
-            ki=pid_config.get('ki', 0.0055),
-            kd=pid_config.get('kd', 0.105),
+            kp=pid_config.get('kp', 0.45),
+            ki=pid_config.get('ki', 0.003),
+            kd=pid_config.get('kd', 0.1),
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
         )
         
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 100)
+        self.base_speed = lane_config.get('base_speed', 110)
         self.default_speed = self.base_speed
         self.max_speed = lane_config.get('max_speed', 255)
         self.min_speed = lane_config.get('min_speed', 60)
@@ -347,7 +389,7 @@ class AutoModeController:
         
         # Sign detection thresholds
         self.DIST_PREPARE = 130
-        self.DIST_EXECUTE = 250
+        self.DIST_EXECUTE = 300
         
         # Lane detection thresholds
         self.MAX_ERROR_THRESHOLD = 95
@@ -365,6 +407,10 @@ class AutoModeController:
         
         # Smart Recovery: Lưu error cuối cùng khi còn thấy lane
         self.last_valid_error = 0.0
+        
+        # Low-Pass Filter (EMA) để làm mượt error
+        self.filtered_error = 0.0
+        self.smoothing_factor = 0.5  # Hệ số làm mượt (0.0-1.0)
         
         self.latest_debug_frame = None
         self.latest_error = 0
@@ -470,7 +516,7 @@ class AutoModeController:
                     continue
                 
                 # Lane detection
-                error, x_line, center_x, lane_debug_frame = detect_line(
+                raw_error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
                 
@@ -480,15 +526,13 @@ class AutoModeController:
                 else:
                     self.latest_debug_frame = None
                 
-                self.latest_error = error
-                
-                # Lane validity check
-                is_lane_valid = abs(error) <= self.MAX_ERROR_THRESHOLD
+                # Lane validity check (dùng raw_error để phản ứng nhanh khi mất lane)
+                is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
                 
                 if not is_lane_valid:
                     self.lane_lost_count += 1
                     
-                    logger.warning(f"⚠️ Lane lost! Error: {error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
+                    logger.warning(f"⚠️ Lane lost! Error: {raw_error:.0f}px (Count: {self.lane_lost_count}/{self.lane_lost_threshold})")
                     
                     if self.lane_lost_count >= self.lane_lost_threshold:
                         if not self.recovery_mode:
@@ -527,7 +571,7 @@ class AutoModeController:
                         continue
                 
                 # Lane found - Cập nhật last_valid_error cho Smart Recovery
-                self.last_valid_error = error
+                self.last_valid_error = raw_error
                 self.lane_lost_count = 0
                 
                 if self.recovery_mode:
@@ -536,14 +580,20 @@ class AutoModeController:
                     self.robot.driver.stop()
                     time.sleep(0.2)
                 
-                if not detections:
-                    self.robot.current_state = f'FOLLOWING LANE (Error: {error:.0f}px)'
+                # Áp dụng Low-Pass Filter (EMA) để làm mượt error
+                self.filtered_error = (self.smoothing_factor * raw_error) + ((1 - self.smoothing_factor) * self.filtered_error)
                 
-                # PID control
+                # Cập nhật latest_error bằng giá trị đã lọc (hiển thị Dashboard mượt hơn)
+                self.latest_error = int(self.filtered_error)
+                
+                if not detections:
+                    self.robot.current_state = f'FOLLOWING LANE (Error: {self.latest_error:.0f}px)'
+                
+                # PID control (sử dụng filtered_error thay vì raw_error)
                 current_time = time.time()
                 dt = 0.05
                 
-                correction = self.pid.compute(error, dt)
+                correction = self.pid.compute(self.filtered_error, dt)
                 self.latest_correction = correction
                 
                 # Calculate motor speeds
