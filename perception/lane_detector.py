@@ -35,14 +35,14 @@ def detect_line(frame, config=None):
     # ============================================================
     if config is None:
         config = {
-            'roi_top_ratio': 0.3,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
+            'roi_top_ratio': 0.5,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
             'roi_bottom_ratio': 1.0,
-            'canny_low': 65,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
-            'canny_high': 165,           # TĂNG lên 120
-            'hough_threshold': 75,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
-            'min_line_length': 50,       # TĂNG lên 30 (loại nhiễu)
-            'max_line_gap': 35,          # TĂNG lên 20
-            'blur_kernel': 5,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
+            'canny_low': 80,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
+            'canny_high': 185,           # TĂNG lên 120
+            'hough_threshold': 45,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
+            'min_line_length': 60,       # TĂNG lên 30 (loại nhiễu)
+            'max_line_gap': 30,          # TĂNG lên 20
+            'blur_kernel': 7,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
         }
 
     height, width = frame.shape[:2]  # Giờ luôn là 640x480
@@ -91,8 +91,8 @@ def detect_line(frame, config=None):
     # Mở rộng ROI (30%-70% thay vì 35%-65%) - Bắt vạch ở 2 bên tốt hơn
     roi_vertices = np.array([[
         (0, roi_bottom),
-        (int(width * 0.30), roi_top),  # MỞ RỘNG: 30% thay vì 35%
-        (int(width * 0.9), roi_top),  # MỞ RỘNG: 70% thay vì 65%
+        (int(width * 0.2), roi_top),  # MỞ RỘNG: 30% thay vì 35%
+        (int(width * 0.8), roi_top),  # MỞ RỘNG: 70% thay vì 65%
         (width, roi_bottom)
     ]], dtype=np.int32)
     
@@ -224,7 +224,7 @@ def detect_line(frame, config=None):
     # ============================================================
     # 7. TÍNH SAI SỐ VÀ VẼ DEBUG
     # ============================================================
-    CAMERA_OFFSET = -25  # Hiệu chỉnh nếu camera không đặt chính giữa robot
+    CAMERA_OFFSET = -0  # Hiệu chỉnh nếu camera không đặt chính giữa robot
     if lane_status == "NO_LANE":
         error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
     else:

@@ -38,12 +38,10 @@ class ObjectDetector:
         results = self.model(frame, imgsz=640, conf=self.conf_threshold, verbose=False)
         
         # 2. Lấy ảnh kết quả cơ bản từ YOLO (đã có khung bao và tên class)
-        annotated_frame_rgb = results[0].plot()
+        # YOLO plot() trả về BGR, không cần chuyển đổi
+        annotated_frame_bgr = results[0].plot()
         
-        # 3. Chuyển sang BGR cho OpenCV/Web
-        annotated_frame_bgr = cv2.cvtColor(annotated_frame_rgb, cv2.COLOR_RGB2BGR)
-        
-        # 4. Trích xuất thông tin và VẼ THÊM KÍCH THƯỚC
+        # 3. Trích xuất thông tin và VẼ THÊM KÍCH THƯỚC
         detections = []
         height_img, width_img = annotated_frame_bgr.shape[:2]
 
@@ -90,7 +88,7 @@ class ObjectDetector:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, 
                         text_color, 2)
 
-        # 5. (Tùy chọn) Vẽ thước kẻ tham chiếu bên cạnh phải màn hình
+        # 4. (Tùy chọn) Vẽ thước kẻ tham chiếu bên cạnh phải màn hình
         # Để bạn dễ ước lượng kích thước mà không cần vật thể
         x_ref = width_img - 30
         y_center = height_img // 2

@@ -1,491 +1,114 @@
 # ============================================================================
-# Hardware Configuration for Raspberry Pi 5 + Arduino Uno
-# Autonomous Car - Lane Detection System
-# OPTIMIZED for: Black lines on white background (bìa trắng)
-# Camera: Raspberry Pi Camera Module 2 (1640x1232 → Auto resize 640x480)
-# Date: 2024-12-03
+# Hardware Configuration - LogisticsBot
+# File cấu hình chính cho toàn bộ hệ thống robot
 # ============================================================================
 
-# Control Mode: 'arduino' or 'direct'
+# Chế độ điều khiển motor
+# - 'arduino': Dùng Arduino Uno điều khiển motor qua UART (khuyến nghị)
+# - 'direct': Dùng GPIO Raspberry Pi trực tiếp (cần L298NDriver)
 control_mode: 'arduino'
 
 # ============================================================================
-# ARDUINO CONFIGURATION
+# ARDUINO - Cấu hình giao tiếp UART với Arduino Uno
 # ============================================================================
 arduino:
-  port: '/dev/ttyACM0'  # Arduino Uno port (check with: ls /dev/ttyACM*)
-  baudrate: 115200
-  timeout: 1.0
-  reconnect_interval: 5.0
-  
-  # Arduino Uno pin mapping
-  pins:
-    # Motor pins (L298N Driver)
-    left_motor_pwm: 9      # ENA - PWM (Speed control)
-    left_motor_in1: 2      # IN1 - Direction
-    left_motor_in2: 3      # IN2 - Direction
-    right_motor_pwm: 10    # ENB - PWM (Speed control)
-    right_motor_in3: 4     # IN3 - Direction
-    right_motor_in4: 5     # IN4 - Direction
-    
-    # Sensor pins
-    ultrasonic_trig: 12    # HC-SR04 Trigger
-    ultrasonic_echo: 11    # HC-SR04 Echo
-    # NO LINE SENSORS - Camera-based lane detection only
-
-
-# PWM Configuration
-pwm:
-  frequency: 1000          # Hz (1kHz standard for L298N)
+  port: '/dev/ttyACM0'    # Cổng serial (thường là /dev/ttyACM0 hoặc /dev/ttyUSB0)
+  baudrate: 115200        # Tốc độ truyền (phải khớp với firmware Arduino)
 
 # ============================================================================
-# ROBOT PHYSICAL PARAMETERS
-# ============================================================================
-robot:
-  wheel_diameter: 0.065    # meters (65mm)
-  wheel_base: 0.15         # meters (150mm - distance between left/right wheels)
-  max_speed: 0.5           # m/s (maximum forward speed)
-  max_angular_speed: 1.0   # rad/s (maximum turning speed)
-  
-  # Lane dimensions (for reference)
-  lane_width: 0.38         # meters (38cm - actual competition track width)
-  robot_width: 0.15        # meters (15cm - robot chassis width)
-
-# ============================================================================
-# SAFETY LIMITS
+# SAFETY - Cấu hình an toàn
 # ============================================================================
 safety:
-  emergency_stop_distance: 0.2   # meters (20cm - ultrasonic trigger distance)
-  max_acceleration: 2.0          # m/s² (prevent wheel slippage)
-  timeout: 5.0                   # seconds (watchdog timeout)
-  min_safe_distance: 15.0        # cm (minimum obstacle distance)
-  
-  # Lane loss handling
-  max_lane_lost_frames: 15       # Stop after losing lane for 15 frames (~0.5s at 30fps)
-  recovery_mode: 'stop'          # 'stop', 'slow', or 'continue'
+  timeout: 5.0  # Thời gian (giây) không nhận lệnh thì tự động dừng robot
 
 # ============================================================================
-# SENSOR CONFIGURATION
+# CAMERA - Cấu hình Picamera2 (Raspberry Pi Camera Module 2)
 # ============================================================================
 sensors:
-  # HC-SR04 Ultrasonic Sensor (Obstacle Detection)
-  ultrasonic:
-    enabled: true
-    max_distance: 400.0          # cm (sensor maximum range)
-    min_distance: 2.0            # cm (sensor minimum range)
-    update_rate: 10              # Hz (10 readings per second)
-    timeout: 0.1                 # seconds (reading timeout)
-  
-  
-  # ============================================================================
-  # RASPBERRY PI CAMERA MODULE 2 (PRIMARY SENSOR)
-  # ============================================================================
   camera:
-    enabled: true
-    backend: 'picamera2'
+    resolution: [1640, 1232]  # Độ phân giải [width, height] - Full FOV của Camera V2
+    framerate: 30             # Số frame/giây
     
-    # Resolution Settings
-    # Native: 1640x1232 (Full FOV) → Auto-resized to 640x480 for processing
-    # Why 1640x1232? Wider field of view to see both lane lines
-    # Why resize to 640x480? Faster processing, optimized parameters
-    resolution: [1640, 1232]
-    framerate: 30                # Target FPS (will be auto-adjusted)
-    device: 1                   # Camera index (0 = first camera)
-    
-    # Picamera2 specific settings
     picamera2:
-      format: 'RGB888'           # Color format (RGB888 = 24-bit color)
-      buffer_count: 4            # Number of frame buffers (higher = smoother)
+      format: 'RGB888'        # Định dạng màu (RGB888 = 24-bit RGB)
+      buffer_count: 4         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
       
-      # Camera Controls - OPTIMIZED for BLACK LINES on WHITE BACKGROUND
+      # Camera controls - Điều chỉnh chất lượng ảnh
       controls:
-        FrameRate: 30            # Target frame rate
-        ExposureTime: null       # Auto exposure (null = auto, or set microseconds)
-        #AnalogueGain: 4.0        # ISO sensitivity (1.0 = normal, increase if dark)
-        
-        # Image Quality - Tuned for lane detection
-        Brightness: 0.0          # Brightness adjustment (-1.0 to 1.0)
-        Contrast: 1.3            # INCREASED from 1.2 → 1.3 (make black lines stand out)
-        Saturation: 0.7          # DECREASED from 0.8 → 0.7 (reduce color noise)
-        Sharpness: 1.3           # INCREASED from 1.2 → 1.3 (sharper edges)
-        
-        # Auto White Balance
-        AwbEnable: true          # Enable auto white balance
-        #AwbMode: 'auto'          # AWB mode (auto, tungsten, fluorescent, etc.)
-      
-      # Advanced settings
-      auto_focus: false          # Camera V2 has fixed focus
-      lens_position: null        # Only for Camera V3 with autofocus
+        FrameRate: 30         # FPS thực tế
+        # Auto White Balance (true = tự động cân bằng trắng)
 
 # ============================================================================
-# AI/COMPUTER VISION SETTINGS
+# LANE DETECTION - Cấu hình phát hiện vạch kẻ đường
+# Tối ưu cho: Vạch ĐEN trên nền TRẮNG
 # ============================================================================
 ai:
-  # ============================================================================
-  # LANE DETECTION - OPTIMIZED FOR BLACK LINES ON WHITE BACKGROUND
-  # ============================================================================
   lane_detection:
-    enabled: true
-    method: 'opencv'             # 'opencv' (Hough), 'adaptive', or 'hybrid'
+    # ROI (Region of Interest) - Vùng quan tâm trong ảnh
+    roi_top_ratio: 0.5       # Bắt đầu ROI từ 35% từ trên (0.0 = đỉnh, 1.0 = đáy)
+    roi_bottom_ratio: 1.0     # Kết thúc ROI tại đáy ảnh
+    roi_left_ratio: 0.2      # Biên trái ROI (30% từ trái)
+    roi_right_ratio: 0.8     # Biên phải ROI (70% từ trái)
     
-    # Physical Parameters
-    lane_width_cm: 23            # Real lane width in cm
-    robot_width_cm: 15           # Real robot width in cm
+    # Canny Edge Detection - Phát hiện cạnh
+    canny_low: 80             # Ngưỡng thấp (giảm = nhạy hơn, nhiều edge hơn)
+    canny_high: 185           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
     
-    # CRITICAL: Lane width in pixels at 640x480 resolution
-    # ⚠️ MUST BE CALIBRATED using test_lane_optimized.py (Option 1)
-    # Default value is estimated, actual value depends on camera height/angle
-    lane_width_pixels: 245      # ⚠️ RUN CALIBRATION TO GET ACCURATE VALUE
+    # Hough Transform - Phát hiện đường thẳng
+    hough_threshold: 45       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
+    min_line_length: 60       # Độ dài tối thiểu của đường thẳng (pixel)
+    max_line_gap: 30          # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
     
-    # Region of Interest (ROI) - Trapezoid shape
-    # Lower ratio = look closer to robot (better for sharp turns)
-    # Higher ratio = look farther ahead (better for straight lines)
-    roi_top_ratio: 0.3          # Start at 35% from top (65% from bottom)
-    roi_bottom_ratio: 1.0        # End at 100% (bottom of image)
-    roi_left_ratio: 0.30         # Left boundary at 30% (wider view)
-    roi_right_ratio: 0.70        # Right boundary at 70% (wider view)
-    
-    # ============================================================================
-    # CANNY EDGE DETECTION - Tuned for white background + black lines
-    # ============================================================================
-    canny_low: 65                # OPTIMIZED: Lower threshold (higher = less sensitive)
-    canny_high: 165              # OPTIMIZED: Upper threshold
-    # NOTE: For darker/noisier conditions, decrease both values by 10
-    
-    # ============================================================================
-    # HOUGH TRANSFORM - Line detection parameters
-    # ============================================================================
-    hough_threshold: 75          # Minimum votes to detect line (lower = more sensitive)
-    min_line_length: 50          # Minimum line length in pixels
-    max_line_gap: 35             # Maximum gap between line segments to connect
-    
-    # Fine-tuning guide:
-    # - NO LANE DETECTED? Decrease hough_threshold (20 → 15 → 10)
-    # - TOO MANY FALSE LINES? Increase hough_threshold (20 → 25 → 30)
-    # - BROKEN LINES? Increase max_line_gap (20 → 30 → 40)
-    # - SHORT SEGMENTS? Decrease min_line_length (30 → 25 → 20)
-    
-    # ============================================================================
-    # IMAGE PREPROCESSING
-    # ============================================================================
-    blur_kernel: 5               # Gaussian blur kernel size (must be odd: 3, 5, 7)
-    use_clahe: true              # Use CLAHE for contrast enhancement
-    clahe_clip_limit: 1.5        # CLAHE clip limit (1.0-3.0, lower = subtle)
-    clahe_tile_size: 8           # CLAHE tile grid size (8x8 default)
-    invert_grayscale: true       # Invert to make black lines white (CRITICAL!)
-    
-    # ============================================================================
-    # LINE FILTERING
-    # ============================================================================
-    min_slope: 0.5               # Minimum absolute slope to accept (filter horizontal lines)
-    max_slope: 10.0              # Maximum absolute slope (filter near-vertical lines)
-    
-    # Slope classification:
-    # - Left lane: slope < -0.5, located left of center
-    # - Right lane: slope > 0.5, located right of center
-    
-    # ============================================================================
-    # LANE TRACKING & STABILITY
-    # ============================================================================
-    smoothing_factor: 0.7        # Exponential smoothing (0=no smooth, 1=max smooth)
-    confidence_threshold: 0.6    # Minimum confidence to trust detection
-    use_kalman_filter: false     # Use Kalman filter for smoother tracking
-    
-    # Lane loss handling
-    lane_lost_threshold: 10      # Frames before considering lane lost
-    lane_lost_action: 'stop'     # Action when lane lost: 'stop', 'slow', 'continue'
-    
-    # ============================================================================
-    # ADAPTIVE THRESHOLD METHOD (Fallback/Alternative)
-    # ============================================================================
-    adaptive:
-      enabled: true              # Enable as fallback when Hough fails
-      method: 'gaussian'         # 'gaussian' or 'mean'
-      block_size: 21             # Size of pixel neighborhood (must be odd)
-      c_value: 8                 # Constant subtracted from mean
-      min_contour_area: 200      # Minimum contour area to consider (pixels²)
-      max_contour_area: 50000    # Maximum contour area (filter out large blobs)
-      use_when_hough_fails: true # Auto-switch to adaptive when Hough fails
-      
-      # Tuning guide:
-      # - LINES TOO THICK? Increase c_value (8 → 10 → 12)
-      # - LINES TOO THIN? Decrease c_value (8 → 6 → 4)
-      # - BROKEN LINES? Decrease min_contour_area (200 → 150 → 100)
-  
-  # ============================================================================
-  # OBJECT DETECTION (Optional - for Follow mode)
-  # ============================================================================
-  object_detection:
-    enabled: false               # Enable for object following mode
-    model: 'yolov5s'            # Model: 'yolov5s', 'yolov5n', 'yolov8n'
-    confidence_threshold: 0.5    # Minimum confidence to detect object
-    target_classes: [0]          # Class IDs to detect (0 = person)
-    
-  # ============================================================================
-  # COLOR TRACKING (Optional - for colored object following)
-  # ============================================================================
-  color_tracking:
-    enabled: false               # Enable for color-based following
-    target_color: 'red'          # Target color to follow
-    
-    # HSV color ranges
-    colors:
-      red:
-        lower_hsv: [0, 100, 100]
-        upper_hsv: [10, 255, 255]
-      green:
-        lower_hsv: [40, 50, 50]
-        upper_hsv: [80, 255, 255]
-      blue:
-        lower_hsv: [100, 50, 50]
-        upper_hsv: [130, 255, 255]
-      yellow:
-        lower_hsv: [20, 100, 100]
-        upper_hsv: [30, 255, 255]
+    # Preprocessing - Tiền xử lý ảnh
+    blur_kernel: 7            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)
 
 # ============================================================================
-# LANE FOLLOWING CONTROL (PID-based)
+# LANE FOLLOWING - Cấu hình chế độ Auto (theo vạch)
 # ============================================================================
 lane_following:
-  enabled: true
-  
-  # ============================================================================
-  # PID CONTROLLER PARAMETERS
-  # ============================================================================
-  # Tuning Guide:
-  # 1. Start with Kp only (Ki=0, Kd=0)
-  # 2. Increase Kp until oscillation starts
-  # 3. Add Kd to dampen oscillation
-  # 4. Add small Ki only if steady-state error exists
-  
+  # PID Controller - Điều khiển steering
   pid:
-    # Proportional Gain (Response strength)
-    kp: 0.36                      # BASELINE: Good for most conditions
-    # Effect: Higher = faster response, more aggressive steering
-    # Too high: Oscillation, overshooting
-    # Too low: Slow response, can't handle sharp turns
-    
-    # Integral Gain (Steady-state error correction)
-    ki: 0.0055              # SMALL VALUE: Correct cumulative error
-    # Effect: Eliminates persistent offset over time
-    # Too high: Overshooting, instability
-    # Too low: Steady-state error remains
-    
-    # Derivative Gain (Damping, smoothness)
-    kd: 0.105                   # DAMPING: Reduce oscillation
-    # Effect: Predicts future error, smooths response
-    # Too high: Sluggish, can amplify noise
-    # Too low: Oscillation, jittery movement
-    
-    # Output Limits
-    max_output: 255              # Maximum steering correction (PWM value)
-    min_output: -255             # Minimum steering correction (negative = opposite)
-    
-    # Advanced Settings
-    derivative_smoothing: 0.7    # Smooth derivative term (0-1)
-    integral_limit: 100          # Anti-windup: max integral accumulation
-    integral_reset_threshold: 50 # Reset integral when error > threshold
+    kp: 1.0                 # Proportional: Phản ứng tỷ lệ với error (tăng = nhanh hơn)
+    ki: 0.003                # Integral: Sửa lỗi tích lũy (tăng = bù offset tốt hơn)
+    kd: 0.1            # Derivative: Giảm dao động (tăng = mượt hơn)
+    max_output: 255           # Giới hạn output tối đa
+    min_output: -255          # Giới hạn output tối thiểu
+    derivative_smoothing: 0.5 # Làm mượt derivative (0-1, cao = mượt hơn)
   
-  # ============================================================================
-  # SPEED CONTROL
-  # ============================================================================
-  # Dynamic speed adjustment based on error magnitude
-  base_speed: 90                # Base PWM speed (0-255)
-  max_speed: 255                 # Maximum speed on straight sections
-  min_speed: 80                  # Minimum speed during sharp turns
-  
-  # Speed reduction rules
-  speed_reduction:
-    enabled: true
-    error_thresholds:
-      low: 20                    # Error < 20: Full speed
-      medium: 50                 # Error 20-50: Reduce to 80% speed
-      high: 80                   # Error 50-80: Reduce to 60% speed
-      critical: 100              # Error > 100: Reduce to 50% speed (min_speed)
-  
-  # Acceleration limits (prevent wheel slippage)
-  max_acceleration: 50           # Maximum PWM change per cycle
-  
-  # ============================================================================
-  # STEERING CONTROL
-  # ============================================================================
-  steering_mode: 'differential'  # 'differential' or 'ackermann'
-  max_steering_angle: 45         # Maximum steering angle (degrees, for reference)
-  steering_sensitivity: 1.2      # Steering multiplier (>1 = more aggressive)
-  
-  # Differential steering formula:
-  # left_speed = base_speed - (error * kp)
-  # right_speed = base_speed + (error * kp)
+  # Speed settings - Cấu hình tốc độ
+  base_speed: 90              # Tốc độ cơ bản khi đi thẳng (0-255)
+  max_speed: 255              # Tốc độ tối đa
+  min_speed: 80               # Tốc độ tối thiểu khi vào cua
 
 # ============================================================================
-# PID TUNING PRESETS (Quick switching)
-# ============================================================================
-pid_presets:
-  # Ultra Safe - First run, testing
-  ultra_safe:
-    kp: 0.5
-    ki: 0.0
-    kd: 0.2
-    base_speed: 100
-    note: "Very slow, stable, good for initial testing"
-  
-  # Conservative - Smooth indoor tracks
-  conservative:
-    kp: 0.7
-    ki: 0.01
-    kd: 0.25
-    base_speed: 120
-    note: "Smooth motion, minimal oscillation"
-  
-  # Balanced - General purpose (RECOMMENDED)
-  balanced:
-    kp: 0.36
-    ki: 0.0055
-    kd: 0.105
-    base_speed: 90  
-    note: "Good balance of speed and stability"
-  
-  # Aggressive - Fast, sharp turns
-  aggressive:
-    kp: 1.5
-    ki: 0.03
-    kd: 0.6
-    base_speed: 150
-    note: "Fast response, handles sharp curves"
-  
-  # Competition - Maximum performance
-  competition:
-    kp: 1.8
-    ki: 0.05
-    kd: 0.8
-    base_speed: 180
-    note: "Optimized for competition tracks, requires tuning"
-
-# ============================================================================
-# FOLLOW MODE (Optional - for object/person following)
+# FOLLOW MODE - Cấu hình chế độ theo dõi đối tượng
 # ============================================================================
 follow_mode:
-  enabled: false
-  target_distance: 50            # cm (desired distance to target)
-  min_distance: 20               # cm (stop distance)
-  max_distance: 100              # cm (search distance)
-  angle_tolerance: 0.1           # radians (centering tolerance)
-  speed_multiplier: 0.8          # Speed factor for follow mode
+  # Target size control - Điều khiển khoảng cách bằng kích thước object
+  target_size: 350            # Kích thước mục tiêu (pixel) - robot giữ khoảng cách này
+  size_tolerance: 20          # Dung sai ±20px (trong khoảng này = đứng yên)
   
-  # PID for distance control
-  pid:
-    kp: 0.6
-    ki: 0.0
-    kd: 0.2
+  # Speed settings - Cấu hình tốc độ
+  forward_speed_max: 150      # Tốc độ tiến tối đa (khi object xa)
+  forward_speed_min: 80       # Tốc độ tiến tối thiểu
+  backward_speed: 100         # Tốc độ lùi (khi object quá gần)
+  turn_speed_max: 160         # Tốc độ xoay tối đa
+  
+  # PID cho centering (giữ object ở giữa frame)
+  pid_horizontal:
+    kp: 0.3                   # Proportional
+    ki: 0.0                   # Integral (thường = 0)
+    kd: 0.05                  # Derivative
+  
+  # PID cho distance (giữ khoảng cách)
+  pid_distance:
+    kp: 1.0                   # Proportional
+    ki: 0.0                   # Integral
+    kd: 0.4                   # Derivative
 
 # ============================================================================
-# LOGGING & DEBUG
-# ============================================================================
-logging:
-  level: 'INFO'                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-  file: 'data/logs/robot.log'
-  max_size: 10485760             # 10MB per log file
-  backup_count: 5                # Keep 5 backup log files
-  
-  # Console output
-  console_output: true           # Print to terminal
-  colored_output: true           # Use colored terminal output
-  
-  # Lane detection logging
-  log_lane_details: true         # Log error, x_line, center_x
-  log_frequency: 30              # Log every N frames (reduce log size)
-  save_debug_frames: false       # Save annotated frames (WARNING: High disk usage!)
-  debug_frame_interval: 100      # Save every Nth frame if enabled
-  
-  # Performance logging
-  log_fps: true                  # Log frames per second
-  log_latency: true              # Log processing latency
-
-# ============================================================================
-# VISUAL ODOMETRY (Optional - position estimation from camera)
+# VISUAL ODOMETRY - Đo quãng đường bằng camera
 # ============================================================================
 visual_odometry:
-  enabled: true                 # Enable visual odometry
-  scale_factor: 0.0547           # 1 pixel = 0.0547 cm (REQUIRES CALIBRATION!)
-  
-  # Feature detection (Shi-Tomasi corners)
-  max_features: 200              # Maximum number of features to track
-  quality_level: 0.01            # Feature quality threshold
-  min_distance: 10               # Minimum distance between features
-  
-  # Optical Flow (Lucas-Kanade)
-  window_size: 21                # Search window size
-  max_level: 3                   # Pyramid levels
-  
-  # Outlier rejection (RANSAC)
-  use_ransac: true               # Use RANSAC for robust estimation
-  ransac_threshold: 3.0          # Inlier threshold (pixels)
-  
-  # Feature management
-  min_features: 50               # Re-detect when features < threshold
-  redetect_interval: 30          # Re-detect every N frames
-
-# ============================================================================
-# WEB DASHBOARD (Optional - remote monitoring)
-# ============================================================================
-dashboard:
-  enabled: false                 # Enable web dashboard
-  host: '0.0.0.0'               # Listen on all interfaces
-  port: 5000                     # Dashboard port
-  update_rate: 10                # Updates per second
-  stream_quality: 80             # JPEG quality (0-100)
-  
-  # Features
-  show_video_feed: true          # Stream camera feed
-  show_statistics: true          # Show error, speed, status
-  show_logs: true                # Show recent logs
-  remote_control: false          # Allow remote start/stop (DANGEROUS!)
-
-# ============================================================================
-# CALIBRATION DATA (Auto-populated by calibration script)
-# ============================================================================
-calibration:
-  camera:
-    lane_width_pixels: 245      # Set by calibration script
-    scale_factor: 0.0547           # cm per pixel
-    calibration_date: null       # ISO datetime
-  
-  motor:
-    left_speed_factor: 1.0       # Compensation for motor differences
-    right_speed_factor: 1.0
-    calibration_date: null
-  
-  pid:
-    last_tuned: null             # Last PID tuning session
-    track_type: null             # Track type used for tuning
-
-# ============================================================================
-# COMPETITION SETTINGS (Quick enable/disable for competition)
-# ============================================================================
-competition_mode:
-  enabled: false
-  
-  # Overrides when enabled
-  overrides:
-    base_speed: 90
-    pid_preset: 'balanced'
-    logging_level: 'WARNING'     # Reduce logging overhead
-    save_debug_frames: false
-    dashboard_enabled: false
-  
-  # Emergency stop
-  emergency_stop_button_pin: 17  # GPIO pin for physical e-stop button
-  enable_watchdog: true          # Enable software watchdog
-
-# ============================================================================
-# NOTES & REMINDERS
-# ============================================================================
-# 1. ALWAYS run calibration before first use: python3 test_lane_optimized.py (Option 1)
-# 2. Update LANE_WIDTH_PIXELS in ai.lane_detection section after calibration
-# 3. Start with 'ultra_safe' PID preset for first test
-# 4. Gradually increase to 'balanced' then 'aggressive' as needed
-# 5. Fine-tune Canny/Hough parameters based on lighting conditions
-# 6. Test in actual competition environment before race day
-# 7. Keep backup of working config before making changes
-# 8. Monitor logs during testing: tail -f data/logs/robot.log
-# ============================================================================
+  scale_factor: 0.1094          # Hệ số chuyển đổi pixel → cm (1 pixel = 0.05 cm)
+                              # ⚠️ Cần calibrate cho camera và độ cao cụ thể

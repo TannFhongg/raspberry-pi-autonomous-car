@@ -32,16 +32,16 @@ frame_lock = threading.Lock()
 
 # ===== LANE DETECTION PARAMETERS (Tunable) =====
 lane_params = {
-    'roi_top_ratio': 0.15,
+    'roi_top_ratio': 0.3,
     'roi_bottom_ratio': 1.0,
-    'roi_left_ratio': 0.10,      # ROI trái: 10% (mở rộng)
-    'roi_right_ratio': 0.90,     # ROI phải: 90% (mở rộng)
-    'canny_low': 65,
-    'canny_high': 165,
-    'hough_threshold': 40,
-    'min_line_length': 50,
-    'max_line_gap': 35,
-    'blur_kernel': 5,
+    'roi_left_ratio': 0.20,      # ROI trái: 10% (mở rộng)
+    'roi_right_ratio': 0.80,     # ROI phải: 90% (mở rộng)
+    'canny_low': 100,
+    'canny_high': 200,
+    'hough_threshold': 90,
+    'min_line_length': 80,
+    'max_line_gap': 30,
+    'blur_kernel': 9,
 }
 
 # Parameter ranges for UI sliders

@@ -72,7 +72,7 @@ class ArduinoDriver:
             )
             
             # Wait for Arduino to boot
-            time.sleep(10)
+            time.sleep(5)
             
             # Flush buffers
             self.serial.reset_input_buffer()

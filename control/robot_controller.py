@@ -80,7 +80,7 @@ class RobotController:
 
         logger.info("Robot Controller initialized")
     
-    def smart_turn(self, target_angle: float, speed: int = 220, timeout: float = 5.0):
+    def smart_turn(self, target_angle: float, speed: int = 200, timeout: float = 5.0):
         """Smart turn using IMU"""
         if speed < 130:
             logger.warning(f"Speed {speed} too low, setting to 130")
@@ -373,9 +373,9 @@ class AutoModeController:
         # PID config - Giá trị mặc định khớp với hardware_config.yaml
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.3),              # Khớp với hardware_config.yaml
-            ki=pid_config.get('ki', 0.0),              # Khớp với hardware_config.yaml
-            kd=pid_config.get('kd', 0.05),             # Khớp với hardware_config.yaml
+            kp=pid_config.get('kp', 0.45),              # Khớp với hardware_config.yaml
+            ki=pid_config.get('ki', 0.002),              # Khớp với hardware_config.yaml
+            kd=pid_config.get('kd', 0.08),             # Khớp với hardware_config.yaml
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
             derivative_smoothing=pid_config.get('derivative_smoothing', 0.8)
@@ -383,27 +383,33 @@ class AutoModeController:
         
         # Speed config - Giá trị mặc định khớp với hardware_config.yaml
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 90)    # Khớp với hardware_config.yaml
+        self.base_speed = lane_config.get('base_speed', 120)    # Khớp với hardware_config.yaml
         self.default_speed = self.base_speed
         self.max_speed = lane_config.get('max_speed', 255)     # Khớp với hardware_config.yaml
         self.min_speed = lane_config.get('min_speed', 80)      # Khớp với hardware_config.yaml
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
         # Sign detection thresholds
-        self.DIST_PREPARE = 130
-        self.DIST_EXECUTE = 350
+        self.DIST_PREPARE = 150
+        self.DIST_EXECUTE = 250
         
         # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 95
+        self.MAX_ERROR_THRESHOLD = 950  # Sai số tối đa để coi là còn lane
         self.lane_lost_count = 0
         self.lane_lost_threshold = 5
+        
+        # ===== TURN SIGN APPROACH MODE =====
+        # Khi phát hiện biển rẽ, xe sẽ đi thẳng (ignore lane error lớn) cho đến khi đủ gần
+        self.approaching_turn_sign = False
+        self.turn_sign_direction = None  # 'left' hoặc 'right'
+        self.TURN_SIGN_IGNORE_ERROR_THRESHOLD = 130  # Khi error > này và có biển rẽ → đi thẳng
         
         # Lane Recovery System
         self.recovery_mode = False
         self.recovery_direction = 'left'
         self.recovery_scan_speed = 160
         self.recovery_scan_time = 0.0
-        self.recovery_max_scan_time = 3.0
+        self.recovery_max_scan_time = 0.5  # Giây để quét mỗi bên
         self.recovery_attempts = 0
         self.recovery_max_attempts = 2
         
@@ -477,11 +483,25 @@ class AutoModeController:
                     sign_name = sign['class_name']
                     sign_size = max(sign['w'], sign['h'])
                     
+                    # ===== TURN SIGN APPROACH LOGIC =====
+                    # Khi phát hiện biển rẽ, đánh dấu để xử lý đặc biệt
+                    is_turn_sign = sign_name in ['left_turn_sign', 'right_turn_sign']
+                    
                     if sign_size < self.DIST_PREPARE:
                         self.robot.current_state = f"DETECTED: {sign_name} ({sign_size:.0f}px) - Too far"
+                        # Reset approach mode nếu biển quá xa
+                        if is_turn_sign:
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
                     
                     elif sign_size >= self.DIST_PREPARE and sign_size < self.DIST_EXECUTE:
                         self.robot.current_state = f"PREPARE: {sign_name} ({sign_size:.0f}px)"
+                        
+                        # ===== QUAN TRỌNG: Khi tiếp cận biển rẽ, bật chế độ đi thẳng =====
+                        if is_turn_sign:
+                            self.approaching_turn_sign = True
+                            self.turn_sign_direction = 'left' if sign_name == 'left_turn_sign' else 'right'
+                            logger.info(f"🎯 APPROACHING {sign_name} - Will go STRAIGHT until close enough")
                     
                     elif sign_size >= self.DIST_EXECUTE:
                         logger.info(f"🚦 EXECUTING: {sign_name} (Size: {sign_size:.0f}px)")
@@ -496,13 +516,19 @@ class AutoModeController:
                         
                         elif sign_name == 'left_turn_sign':
                             logger.info("⬅️ Detected Left Turn Sign -> Smart Turn +90°")
-                            self.robot.smart_turn(90, speed=220)
+                            # Reset approach mode trước khi rẽ
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
+                            self.robot.smart_turn(80, speed=200)
                             self.pid.reset()
                             continue
                         
                         elif sign_name == 'right_turn_sign':
                             logger.info("➡️ Detected Right Turn Sign -> Smart Turn -90°")
-                            self.robot.smart_turn(-90, speed=220)
+                            # Reset approach mode trước khi rẽ
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
+                            self.robot.smart_turn(-80, speed=200)
                             self.pid.reset()
                             continue
                         
@@ -513,6 +539,12 @@ class AutoModeController:
                             self.robot.driver.stop()
                             self.stop()
                             break
+                else:
+                    # Không thấy biển nào → reset approach mode
+                    if self.approaching_turn_sign:
+                        logger.info("⚠️ Lost turn sign - Resuming normal lane following")
+                        self.approaching_turn_sign = False
+                        self.turn_sign_direction = None
                 
                 if sign_action in ["STOP", "TURN"]:
                     continue
@@ -530,6 +562,24 @@ class AutoModeController:
                 
                 # Lane validity check (dùng raw_error để phản ứng nhanh khi mất lane)
                 is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
+                is_lane_completely_lost = abs(raw_error) >= 999  # Mất cả 2 vạch
+                
+                # ===== TURN SIGN APPROACH: Đi thẳng khi tiếp cận biển rẽ =====
+                # Khi đang tiếp cận biển rẽ và error lớn (do nhìn thấy khúc cua phía trước),
+                # KHÔNG bẻ lái theo lane mà đi thẳng cho đến khi đủ gần biển
+                # NGOẠI TRỪ: Nếu mất cả 2 vạch (error=999) → vẫn cần recovery
+                if self.approaching_turn_sign and not is_lane_completely_lost and abs(raw_error) > self.TURN_SIGN_IGNORE_ERROR_THRESHOLD:
+                    logger.info(f"🎯 APPROACHING TURN: Error={raw_error:.0f}px > {self.TURN_SIGN_IGNORE_ERROR_THRESHOLD} → GO STRAIGHT")
+                    self.robot.current_state = f'APPROACHING {self.turn_sign_direction.upper()} TURN (Straight)'
+                    
+                    # Đi thẳng với tốc độ giảm (an toàn hơn khi vào cua)
+                    approach_speed = int(self.base_speed * 1)  # 70% tốc độ
+                    self.robot.driver.set_motors(approach_speed, approach_speed)
+                    
+                    # Reset lane lost count vì đây không phải mất lane thật
+                    self.lane_lost_count = 0
+                    time.sleep(0.03)
+                    continue
                 
                 if not is_lane_valid:
                     self.lane_lost_count += 1
