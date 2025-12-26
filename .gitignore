@@ -16,6 +16,10 @@ models/
 *.log
 # Json 
 *.json
+# jpg
+*.jpg
+# png
+*.png
 # Build files
 build/
 dist/

@@ -45,19 +45,19 @@ sensors:
 ai:
   lane_detection:
     # ROI (Region of Interest) - Vùng quan tâm trong ảnh
-    roi_top_ratio: 0.5       # Bắt đầu ROI từ 35% từ trên (0.0 = đỉnh, 1.0 = đáy)
+    roi_top_ratio: 0.6       # Bắt đầu ROI từ 35% từ trên (0.0 = đỉnh, 1.0 = đáy)
     roi_bottom_ratio: 1.0     # Kết thúc ROI tại đáy ảnh
-    roi_left_ratio: 0.2      # Biên trái ROI (30% từ trái)
-    roi_right_ratio: 0.8     # Biên phải ROI (70% từ trái)
+    roi_left_ratio: 0.1      # Biên trái ROI (30% từ trái)
+    roi_right_ratio: 0.9     # Biên phải ROI (70% từ trái)
     
     # Canny Edge Detection - Phát hiện cạnh
     canny_low: 80             # Ngưỡng thấp (giảm = nhạy hơn, nhiều edge hơn)
     canny_high: 185           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
     
     # Hough Transform - Phát hiện đường thẳng
-    hough_threshold: 45       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
-    min_line_length: 60       # Độ dài tối thiểu của đường thẳng (pixel)
-    max_line_gap: 30          # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
+    hough_threshold: 40       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
+    min_line_length: 50       # Độ dài tối thiểu của đường thẳng (pixel)
+    max_line_gap: 25         # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
     
     # Preprocessing - Tiền xử lý ảnh
     blur_kernel: 7            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)
@@ -68,15 +68,15 @@ ai:
 lane_following:
   # PID Controller - Điều khiển steering
   pid:
-    kp: 1.0                 # Proportional: Phản ứng tỷ lệ với error (tăng = nhanh hơn)
+    kp: 0.1               # Proportional: Phản ứng tỷ lệ với error (tăng = nhanh hơn)
     ki: 0.003                # Integral: Sửa lỗi tích lũy (tăng = bù offset tốt hơn)
-    kd: 0.1            # Derivative: Giảm dao động (tăng = mượt hơn)
+    kd: 0.2           # Derivative: Giảm dao động (tăng = mượt hơn)
     max_output: 255           # Giới hạn output tối đa
     min_output: -255          # Giới hạn output tối thiểu
     derivative_smoothing: 0.5 # Làm mượt derivative (0-1, cao = mượt hơn)
   
   # Speed settings - Cấu hình tốc độ
-  base_speed: 90              # Tốc độ cơ bản khi đi thẳng (0-255)
+  base_speed: 100              # Tốc độ cơ bản khi đi thẳng (0-255)
   max_speed: 255              # Tốc độ tối đa
   min_speed: 80               # Tốc độ tối thiểu khi vào cua
 
@@ -90,7 +90,7 @@ follow_mode:
   
   # Speed settings - Cấu hình tốc độ
   forward_speed_max: 150      # Tốc độ tiến tối đa (khi object xa)
-  forward_speed_min: 80       # Tốc độ tiến tối thiểu
+  forward_speed_min: 90       # Tốc độ tiến tối thiểu
   backward_speed: 100         # Tốc độ lùi (khi object quá gần)
   turn_speed_max: 160         # Tốc độ xoay tối đa
   

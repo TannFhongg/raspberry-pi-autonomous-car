@@ -80,7 +80,7 @@ class RobotController:
 
         logger.info("Robot Controller initialized")
     
-    def smart_turn(self, target_angle: float, speed: int = 220, timeout: float = 5.0):
+    def smart_turn(self, target_angle: float, speed: int = 200, timeout: float = 5.0):
         """Smart turn using IMU"""
         if speed < 130:
             logger.warning(f"Speed {speed} too low, setting to 130")
@@ -370,38 +370,45 @@ class AutoModeController:
             conf_threshold=0.5
         )
         
+        # PID config - Giá trị mặc định khớp với hardware_config.yaml
         pid_config = robot_controller.config.get('lane_following', {}).get('pid', {})
         self.pid = PIDController(
-            kp=pid_config.get('kp', 0.45),
-            ki=pid_config.get('ki', 0.003),
-            kd=pid_config.get('kd', 0.1),
+            kp=pid_config.get('kp', 0.45),              # Khớp với hardware_config.yaml
+            ki=pid_config.get('ki', 0.002),              # Khớp với hardware_config.yaml
+            kd=pid_config.get('kd', 0.08),             # Khớp với hardware_config.yaml
             output_min=pid_config.get('min_output', -255),
             output_max=pid_config.get('max_output', 255),
-            derivative_smoothing=pid_config.get('derivative_smoothing', 0.7)
+            derivative_smoothing=pid_config.get('derivative_smoothing', 0.8)
         )
         
+        # Speed config - Giá trị mặc định khớp với hardware_config.yaml
         lane_config = robot_controller.config.get('lane_following', {})
-        self.base_speed = lane_config.get('base_speed', 110)
+        self.base_speed = lane_config.get('base_speed', 120)    # Khớp với hardware_config.yaml
         self.default_speed = self.base_speed
-        self.max_speed = lane_config.get('max_speed', 255)
-        self.min_speed = lane_config.get('min_speed', 60)
+        self.max_speed = lane_config.get('max_speed', 255)     # Khớp với hardware_config.yaml
+        self.min_speed = lane_config.get('min_speed', 80)      # Khớp với hardware_config.yaml
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
         
         # Sign detection thresholds
-        self.DIST_PREPARE = 130
-        self.DIST_EXECUTE = 300
+        self.DIST_PREPARE = 150
+        self.DIST_EXECUTE = 250
         
         # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 95
+        self.MAX_ERROR_THRESHOLD = 110  # Sai số tối đa để coi là còn lane
         self.lane_lost_count = 0
         self.lane_lost_threshold = 5
+        
+        # ===== TURN SIGN APPROACH MODE =====
+        # Khi phát hiện biển rẽ ở giai đoạn PREPARE, xe sẽ đi thẳng cho đến khi EXECUTE
+        self.approaching_turn_sign = False
+        self.turn_sign_direction = None  # 'left' hoặc 'right'
         
         # Lane Recovery System
         self.recovery_mode = False
         self.recovery_direction = 'left'
-        self.recovery_scan_speed = 130
+        self.recovery_scan_speed = 140
         self.recovery_scan_time = 0.0
-        self.recovery_max_scan_time = 3.0
+        self.recovery_max_scan_time = 0.5  # Giây để quét mỗi bên
         self.recovery_attempts = 0
         self.recovery_max_attempts = 2
         
@@ -475,11 +482,25 @@ class AutoModeController:
                     sign_name = sign['class_name']
                     sign_size = max(sign['w'], sign['h'])
                     
+                    # ===== TURN SIGN APPROACH LOGIC =====
+                    # Khi phát hiện biển rẽ, đánh dấu để xử lý đặc biệt
+                    is_turn_sign = sign_name in ['left_turn_sign', 'right_turn_sign']
+                    
                     if sign_size < self.DIST_PREPARE:
                         self.robot.current_state = f"DETECTED: {sign_name} ({sign_size:.0f}px) - Too far"
+                        # Reset approach mode nếu biển quá xa
+                        if is_turn_sign:
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
                     
                     elif sign_size >= self.DIST_PREPARE and sign_size < self.DIST_EXECUTE:
                         self.robot.current_state = f"PREPARE: {sign_name} ({sign_size:.0f}px)"
+                        
+                        # ===== QUAN TRỌNG: Khi tiếp cận biển rẽ, bật chế độ đi thẳng =====
+                        if is_turn_sign:
+                            self.approaching_turn_sign = True
+                            self.turn_sign_direction = 'left' if sign_name == 'left_turn_sign' else 'right'
+                            logger.info(f"🎯 APPROACHING {sign_name} - Will go STRAIGHT until close enough")
                     
                     elif sign_size >= self.DIST_EXECUTE:
                         logger.info(f"🚦 EXECUTING: {sign_name} (Size: {sign_size:.0f}px)")
@@ -494,13 +515,19 @@ class AutoModeController:
                         
                         elif sign_name == 'left_turn_sign':
                             logger.info("⬅️ Detected Left Turn Sign -> Smart Turn +90°")
-                            self.robot.smart_turn(90, speed=220)
+                            # Reset approach mode trước khi rẽ
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
+                            self.robot.smart_turn(80, speed=200)
                             self.pid.reset()
                             continue
                         
                         elif sign_name == 'right_turn_sign':
                             logger.info("➡️ Detected Right Turn Sign -> Smart Turn -90°")
-                            self.robot.smart_turn(-90, speed=220)
+                            # Reset approach mode trước khi rẽ
+                            self.approaching_turn_sign = False
+                            self.turn_sign_direction = None
+                            self.robot.smart_turn(-80, speed=200)
                             self.pid.reset()
                             continue
                         
@@ -511,11 +538,31 @@ class AutoModeController:
                             self.robot.driver.stop()
                             self.stop()
                             break
+                else:
+                    # Không thấy biển nào → reset approach mode
+                    if self.approaching_turn_sign:
+                        logger.info("⚠️ Lost turn sign - Resuming normal lane following")
+                        self.approaching_turn_sign = False
+                        self.turn_sign_direction = None
                 
                 if sign_action in ["STOP", "TURN"]:
                     continue
                 
-                # Lane detection
+                # ===== TURN SIGN APPROACH: Đi thẳng, BỎ QUA lane detection =====
+                if self.approaching_turn_sign:
+                    logger.info(f"🎯 APPROACHING TURN: Going STRAIGHT (Lane detection SKIPPED)")
+                    self.robot.current_state = f'APPROACHING {self.turn_sign_direction.upper()} TURN (Straight)'
+                    
+                    # Đi thẳng với tốc độ base
+                    approach_speed = int(self.base_speed)
+                    self.robot.driver.set_motors(approach_speed, approach_speed)
+                    
+                    # Reset lane lost count
+                    self.lane_lost_count = 0
+                    time.sleep(0.03)
+                    continue
+                
+                # Lane detection (CHỈ chạy khi KHÔNG approaching turn sign)
                 raw_error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
@@ -526,7 +573,7 @@ class AutoModeController:
                 else:
                     self.latest_debug_frame = None
                 
-                # Lane validity check (dùng raw_error để phản ứng nhanh khi mất lane)
+                # Lane validity check
                 is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
                 
                 if not is_lane_valid:
@@ -663,9 +710,9 @@ class AutoModeController:
 class FollowModeController:
     """
     IMPROVED Follow Mode Controller
-    ✅ Target size = 200px (configurable)
-    ✅ Forward if object < 200px (too far)
-    ✅ Backward if object > 200px (too close)
+    ✅ Target size configurable from hardware_config.yaml
+    ✅ Forward if object < target_size (too far)
+    ✅ Backward if object > target_size (too close)
     ✅ Left/Right centering with PID
     ✅ Support 4 colors: red, green, blue, yellow
     """
@@ -691,35 +738,40 @@ class FollowModeController:
         }
         self.target_color_name = 'red'
         
-        # ===== TARGET SIZE CONTROL =====
-        self.TARGET_SIZE = 350  # 🎯 Kích thước mục tiêu (pixels)
-        self.SIZE_TOLERANCE = 20  # ±20px = dead zone (không điều chỉnh)
+        # ===== LOAD CONFIG FROM hardware_config.yaml =====
+        follow_config = robot_controller.config.get('follow_mode', {})
+        
+        # Target size control - Đọc từ config
+        self.TARGET_SIZE = follow_config.get('target_size', 350)
+        self.SIZE_TOLERANCE = follow_config.get('size_tolerance', 20)
         
         # Size zones
         self.SIZE_MIN = self.TARGET_SIZE - self.SIZE_TOLERANCE  # 180px
         self.SIZE_MAX = self.TARGET_SIZE + self.SIZE_TOLERANCE  # 220px
         
-        # ===== SPEED SETTINGS =====
-        self.FORWARD_SPEED_MAX = 150   # Tốc độ tiến tối đa (khi object rất xa)
-        self.FORWARD_SPEED_MIN = 80   # Tốc độ tiến tối thiểu (khi gần target)
-        self.BACKWARD_SPEED = 100      # Tốc độ lùi (khi object quá gần)
-        self.TURN_SPEED_MAX = 160      # Tốc độ quay tối đa (khi lệch nhiều)
+        # ===== SPEED SETTINGS - Đọc từ config =====
+        self.FORWARD_SPEED_MAX = follow_config.get('forward_speed_max', 150)
+        self.FORWARD_SPEED_MIN = follow_config.get('forward_speed_min', 80)
+        self.BACKWARD_SPEED = follow_config.get('backward_speed', 100)
+        self.TURN_SPEED_MAX = follow_config.get('turn_speed_max', 160)
         
-        # ===== PID CONTROLLERS =====
+        # ===== PID CONTROLLERS - Đọc từ config =====
         # PID cho điều khiển TRÁI/PHẢI (centering)
+        pid_h_config = follow_config.get('pid_horizontal', {})
         self.pid_horizontal = PIDController(
-            kp=0.3,   # Tăng để phản ứng nhanh hơn
-            ki=0.0,
-            kd=0.05,  # Giảm dao động
+            kp=pid_h_config.get('kp', 0.3),
+            ki=pid_h_config.get('ki', 0.0),
+            kd=pid_h_config.get('kd', 0.05),
             output_min=-255,
             output_max=255
         )
         
         # PID cho điều khiển TIẾN/LÙI (distance control)
+        pid_d_config = follow_config.get('pid_distance', {})
         self.pid_distance = PIDController(
-            kp=1.0,   # Điều khiển khoảng cách
-            ki=0.0,  # Xử lý sai số tích lũy
-            kd=0.4,   # Giảm dao động
+            kp=pid_d_config.get('kp', 1.0),
+            ki=pid_d_config.get('ki', 0.0),
+            kd=pid_d_config.get('kd', 0.4),
             output_min=-self.BACKWARD_SPEED,
             output_max=self.FORWARD_SPEED_MAX
         )

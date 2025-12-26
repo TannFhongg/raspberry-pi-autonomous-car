@@ -143,7 +143,7 @@ def calibrate_lane_width_fixed(frame, show_result=False):
     cv2.circle(frame_calib, (right_x, height - 10), 12, (255, 0, 0), -1)
     cv2.line(frame_calib, (left_x, height - 30), (right_x, height - 30), (255, 255, 0), 4)
     
-    cv2.putText(frame_calib, f"Lane: {lane_width_pixels}px = 38cm", 
+    cv2.putText(frame_calib, f"Lane: {lane_width_pixels}px = 25cm", 
                 (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
     cv2.putText(frame_calib, f"Left: {left_x}px | Right: {right_x}px", 
                 (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
@@ -154,9 +154,9 @@ def calibrate_lane_width_fixed(frame, show_result=False):
     # In kết quả
     print(f"\n{'='*60}")
     print(f"✅ CALIBRATION THÀNH CÔNG:")
-    print(f"  Lane Width (Real):  38 cm")
+    print(f"  Lane Width (Real):  25 cm")
     print(f"  Lane Width (Pixel): {lane_width_pixels} px")
-    print(f"  Scale Factor:       {38 / lane_width_pixels:.4f} cm/px")
+    print(f"  Scale Factor:       {25 / lane_width_pixels:.4f} cm/px")
     print(f"  Left X:  {left_x} px")
     print(f"  Right X: {right_x} px")
     print(f"  📸 Đã lưu: calibration_result_fixed.jpg")

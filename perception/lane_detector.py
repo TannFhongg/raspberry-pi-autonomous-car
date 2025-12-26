@@ -35,7 +35,7 @@ def detect_line(frame, config=None):
     # ============================================================
     if config is None:
         config = {
-            'roi_top_ratio': 0.5,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
+            'roi_top_ratio': 0.6,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
             'roi_bottom_ratio': 1.0,
             'canny_low': 80,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
             'canny_high': 185,           # TĂNG lên 120
@@ -56,7 +56,7 @@ def detect_line(frame, config=None):
     # - Tại đáy ảnh (gần xe), 38cm lane ≈ 200-250 pixels
     # QUAN TRỌNG: Cần chạy calibration để lấy số chính xác!
     
-    LANE_WIDTH_PIXELS = 245  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
+    LANE_WIDTH_PIXELS = 389  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
     
     # Debug frame
     frame_debug = frame.copy()
@@ -224,7 +224,7 @@ def detect_line(frame, config=None):
     # ============================================================
     # 7. TÍNH SAI SỐ VÀ VẼ DEBUG
     # ============================================================
-    CAMERA_OFFSET = -0  # Hiệu chỉnh nếu camera không đặt chính giữa robot
+    CAMERA_OFFSET = -15  # Hiệu chỉnh nếu camera không đặt chính giữa robot
     if lane_status == "NO_LANE":
         error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
     else:

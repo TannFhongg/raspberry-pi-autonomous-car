@@ -394,20 +394,19 @@ class AutoModeController:
         self.DIST_EXECUTE = 250
         
         # Lane detection thresholds
-        self.MAX_ERROR_THRESHOLD = 950  # Sai số tối đa để coi là còn lane
+        self.MAX_ERROR_THRESHOLD = 110  # Sai số tối đa để coi là còn lane
         self.lane_lost_count = 0
         self.lane_lost_threshold = 5
         
         # ===== TURN SIGN APPROACH MODE =====
-        # Khi phát hiện biển rẽ, xe sẽ đi thẳng (ignore lane error lớn) cho đến khi đủ gần
+        # Khi phát hiện biển rẽ ở giai đoạn PREPARE, xe sẽ đi thẳng cho đến khi EXECUTE
         self.approaching_turn_sign = False
         self.turn_sign_direction = None  # 'left' hoặc 'right'
-        self.TURN_SIGN_IGNORE_ERROR_THRESHOLD = 130  # Khi error > này và có biển rẽ → đi thẳng
         
         # Lane Recovery System
         self.recovery_mode = False
         self.recovery_direction = 'left'
-        self.recovery_scan_speed = 160
+        self.recovery_scan_speed = 140
         self.recovery_scan_time = 0.0
         self.recovery_max_scan_time = 0.5  # Giây để quét mỗi bên
         self.recovery_attempts = 0
@@ -549,7 +548,21 @@ class AutoModeController:
                 if sign_action in ["STOP", "TURN"]:
                     continue
                 
-                # Lane detection
+                # ===== TURN SIGN APPROACH: Đi thẳng, BỎ QUA lane detection =====
+                if self.approaching_turn_sign:
+                    logger.info(f"🎯 APPROACHING TURN: Going STRAIGHT (Lane detection SKIPPED)")
+                    self.robot.current_state = f'APPROACHING {self.turn_sign_direction.upper()} TURN (Straight)'
+                    
+                    # Đi thẳng với tốc độ base
+                    approach_speed = int(self.base_speed)
+                    self.robot.driver.set_motors(approach_speed, approach_speed)
+                    
+                    # Reset lane lost count
+                    self.lane_lost_count = 0
+                    time.sleep(0.03)
+                    continue
+                
+                # Lane detection (CHỈ chạy khi KHÔNG approaching turn sign)
                 raw_error, x_line, center_x, lane_debug_frame = detect_line(
                     frame, self.detection_config
                 )
@@ -560,26 +573,8 @@ class AutoModeController:
                 else:
                     self.latest_debug_frame = None
                 
-                # Lane validity check (dùng raw_error để phản ứng nhanh khi mất lane)
+                # Lane validity check
                 is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
-                is_lane_completely_lost = abs(raw_error) >= 999  # Mất cả 2 vạch
-                
-                # ===== TURN SIGN APPROACH: Đi thẳng khi tiếp cận biển rẽ =====
-                # Khi đang tiếp cận biển rẽ và error lớn (do nhìn thấy khúc cua phía trước),
-                # KHÔNG bẻ lái theo lane mà đi thẳng cho đến khi đủ gần biển
-                # NGOẠI TRỪ: Nếu mất cả 2 vạch (error=999) → vẫn cần recovery
-                if self.approaching_turn_sign and not is_lane_completely_lost and abs(raw_error) > self.TURN_SIGN_IGNORE_ERROR_THRESHOLD:
-                    logger.info(f"🎯 APPROACHING TURN: Error={raw_error:.0f}px > {self.TURN_SIGN_IGNORE_ERROR_THRESHOLD} → GO STRAIGHT")
-                    self.robot.current_state = f'APPROACHING {self.turn_sign_direction.upper()} TURN (Straight)'
-                    
-                    # Đi thẳng với tốc độ giảm (an toàn hơn khi vào cua)
-                    approach_speed = int(self.base_speed * 1)  # 70% tốc độ
-                    self.robot.driver.set_motors(approach_speed, approach_speed)
-                    
-                    # Reset lane lost count vì đây không phải mất lane thật
-                    self.lane_lost_count = 0
-                    time.sleep(0.03)
-                    continue
                 
                 if not is_lane_valid:
                     self.lane_lost_count += 1
@@ -615,11 +610,14 @@ class AutoModeController:
                             self.recovery_mode = False
                             time.sleep(1.0)
                         
+                        # ✅ FIX: Vẫn cập nhật debug frame khi recovery để tránh đứng hình
+                        time.sleep(0.03)
                         continue
                     else:
                         self.robot.driver.stop()
                         self.robot.current_state = f'SEARCHING LANE ({self.lane_lost_count}/{self.lane_lost_threshold})'
-                        time.sleep(0.05)
+                        # ✅ FIX: Bỏ sleep dài, giữ frame rate ổn định
+                        time.sleep(0.03)
                         continue
                 
                 # Lane found - Cập nhật last_valid_error cho Smart Recovery
@@ -667,7 +665,11 @@ class AutoModeController:
     
     def _perform_lane_recovery(self, frame) -> bool:
         """Perform lane recovery by scanning left-right"""
-        error, x_line, center_x, _ = detect_line(frame, self.detection_config)
+        error, x_line, center_x, recovery_debug_frame = detect_line(frame, self.detection_config)
+        
+        # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery
+        if recovery_debug_frame is not None:
+            self.latest_debug_frame = cv2.resize(recovery_debug_frame, (320, 240))
         
         if abs(error) <= self.MAX_ERROR_THRESHOLD:
             return True
