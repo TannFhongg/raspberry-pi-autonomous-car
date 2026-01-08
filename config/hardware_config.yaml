@@ -19,7 +19,7 @@ arduino:
 # SAFETY - Cấu hình an toàn
 # ============================================================================
 safety:
-  timeout: 5.0  # Thời gian (giây) không nhận lệnh thì tự động dừng robot
+  timeout: 8.0  # Thời gian (giây) không nhận lệnh thì tự động dừng robot
 
 # ============================================================================
 # CAMERA - Cấu hình Picamera2 (Raspberry Pi Camera Module 2)
@@ -68,9 +68,9 @@ ai:
 lane_following:
   # PID Controller - Điều khiển steering
   pid:
-    kp: 0.1               # Proportional: Phản ứng tỷ lệ với error (tăng = nhanh hơn)
-    ki: 0.003                # Integral: Sửa lỗi tích lũy (tăng = bù offset tốt hơn)
-    kd: 0.2           # Derivative: Giảm dao động (tăng = mượt hơn)
+    kp: 1.0               # Proportional: Phản ứng tỷ lệ với error (tăng = nhanh hơn)
+    ki: 0.00                # Integral: Sửa lỗi tích lũy (tăng = bù offset tốt hơn)
+    kd: 0.05          # Derivative: Giảm dao động (tăng = mượt hơn)
     max_output: 255           # Giới hạn output tối đa
     min_output: -255          # Giới hạn output tối thiểu
     derivative_smoothing: 0.5 # Làm mượt derivative (0-1, cao = mượt hơn)
@@ -102,7 +102,7 @@ follow_mode:
   
   # PID cho distance (giữ khoảng cách)
   pid_distance:
-    kp: 1.0                   # Proportional
+    kp: 0.8                   # Proportional
     ki: 0.0                   # Integral
     kd: 0.4                   # Derivative
 
@@ -110,5 +110,5 @@ follow_mode:
 # VISUAL ODOMETRY - Đo quãng đường bằng camera
 # ============================================================================
 visual_odometry:
-  scale_factor: 0.1094          # Hệ số chuyển đổi pixel → cm (1 pixel = 0.05 cm)
+  scale_factor: 1.2041          # Hệ số chuyển đổi pixel → cm (1 pixel = 0.05 cm)
                               # ⚠️ Cần calibrate cho camera và độ cao cụ thể

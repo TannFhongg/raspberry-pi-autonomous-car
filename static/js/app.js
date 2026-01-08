@@ -259,6 +259,8 @@ function updateLineSensors(sensors) {
 }
 
 // ===== ROBOT CONTROL COMMANDS =====
+let commandInterval = null;  // Interval để gửi lệnh liên tục
+
 function sendCommand(command) {
     // Check mode before sending command
     if (currentMode !== 'manual') {
@@ -287,6 +289,56 @@ function sendCommand(command) {
                 'Failed to send command: ' + command);
         });
 }
+
+// ===== CONTINUOUS COMMAND (Giữ nút gửi lệnh liên tục) =====
+function startContinuousCommand(command) {
+    if (currentMode !== 'manual') return;
+    
+    // Gửi lệnh ngay lập tức
+    sendCommand(command);
+    
+    // Gửi lệnh liên tục mỗi 500ms để tránh watchdog timeout
+    if (commandInterval) clearInterval(commandInterval);
+    commandInterval = setInterval(() => {
+        sendCommand(command);
+    }, 500);
+}
+
+function stopContinuousCommand() {
+    if (commandInterval) {
+        clearInterval(commandInterval);
+        commandInterval = null;
+    }
+    sendCommand('stop');
+}
+
+// ===== BUTTON EVENT HANDLERS (Giữ nút) =====
+document.addEventListener('DOMContentLoaded', function() {
+    const controlButtons = {
+        'btnForward': 'forward',
+        'btnBackward': 'backward',
+        'btnLeft': 'left',
+        'btnRight': 'right'
+    };
+    
+    Object.keys(controlButtons).forEach(btnId => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            // Mouse events
+            btn.addEventListener('mousedown', () => startContinuousCommand(controlButtons[btnId]));
+            btn.addEventListener('mouseup', stopContinuousCommand);
+            btn.addEventListener('mouseleave', stopContinuousCommand);
+            
+            // Touch events (mobile)
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                startContinuousCommand(controlButtons[btnId]);
+            });
+            btn.addEventListener('touchend', stopContinuousCommand);
+            btn.addEventListener('touchcancel', stopContinuousCommand);
+        }
+    });
+});
 
 // ===== EMERGENCY STOP =====
 function emergencyStop() {

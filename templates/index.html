@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LogisticsBot Control Panel</title>
+    <title>Autonomous Control Panel</title>
 
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
@@ -138,19 +138,19 @@
                 <div class="panel-body control-body">
                     <div class="control-left">
                         <div class="control-pad" id="controlPad">
-                            <button class="ctrl-btn btn-up" onclick="sendCommand('forward')">
+                            <button class="ctrl-btn btn-up" id="btnForward">
                                 <i class="fas fa-chevron-up"></i>
                             </button>
-                            <button class="ctrl-btn btn-left" onclick="sendCommand('left')">
+                            <button class="ctrl-btn btn-left" id="btnLeft">
                                 <i class="fas fa-chevron-left"></i>
                             </button>
                             <button class="ctrl-btn btn-center" onclick="sendCommand('stop')">
                                 <i class="fas fa-circle"></i>
                             </button>
-                            <button class="ctrl-btn btn-right" onclick="sendCommand('right')">
+                            <button class="ctrl-btn btn-right" id="btnRight">
                                 <i class="fas fa-chevron-right"></i>
                             </button>
-                            <button class="ctrl-btn btn-down" onclick="sendCommand('backward')">
+                            <button class="ctrl-btn btn-down" id="btnBackward">
                                 <i class="fas fa-chevron-down"></i>
                             </button>
                         </div>
