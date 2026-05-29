@@ -59,6 +59,10 @@ class ArduinoDriver:
         self.running = False
         self.read_thread: Optional[threading.Thread] = None
         
+        # ✅ SAFETY: Heartbeat thread để giữ Arduino watchdog alive
+        self.heartbeat_thread: Optional[threading.Thread] = None
+        self.heartbeat_interval = 1.0  # Send PING every 1 second (< 2s timeout)
+        
         # Try to connect
         self.connect()
     
@@ -95,6 +99,10 @@ class ArduinoDriver:
                 self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
                 self.read_thread.start()
                 
+                # ✅ SAFETY: Start heartbeat thread để giữ Arduino watchdog alive
+                self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+                self.heartbeat_thread.start()
+                
                 return True
             else:
                 logger.warning("Arduino did not respond to PING")
@@ -114,6 +122,8 @@ class ArduinoDriver:
         self.running = False
         if self.read_thread:
             self.read_thread.join(timeout=2.0)
+        if self.heartbeat_thread:
+            self.heartbeat_thread.join(timeout=2.0)
         
         if self.serial and self.serial.is_open:
             self.serial.close()
@@ -295,6 +305,32 @@ class ArduinoDriver:
                 time.sleep(0.1)
         
         logger.info("Arduino read loop stopped")
+    
+    def _heartbeat_loop(self):
+        """
+        Background thread to send periodic PING to Arduino
+        
+        ✅ SAFETY: Keeps Arduino watchdog alive
+        - Arduino has 2-second timeout
+        - We send PING every 1 second (safety margin)
+        - If this thread stops (Pi crash), Arduino auto-stops motors
+        """
+        logger.info("Arduino heartbeat loop started")
+        
+        while self.running:
+            try:
+                # Send PING to keep Arduino watchdog alive
+                # Don't wait for response (non-blocking)
+                self.send_command({'cmd': 'PING'}, wait_response=False)
+                
+                # Sleep for heartbeat interval
+                time.sleep(self.heartbeat_interval)
+                
+            except Exception as e:
+                logger.error(f"Error in heartbeat loop: {e}")
+                time.sleep(1.0)
+        
+        logger.info("Arduino heartbeat loop stopped")
     
     def cleanup(self):
         """Cleanup resources"""

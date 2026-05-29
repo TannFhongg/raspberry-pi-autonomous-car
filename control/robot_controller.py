@@ -172,6 +172,47 @@ class RobotController:
         self.current_speed = max(0, min(255, speed))
         logger.info(f"Speed set to: {self.current_speed}")
     
+    def safe_set_motors(self, left_speed: int, right_speed: int) -> bool:
+        """
+        Safe motor control with emergency stop check
+        
+        ✅ CRITICAL SAFETY: Chặn lệnh nếu emergency_stopped = True
+        
+        Args:
+            left_speed: Left motor speed (-255 to 255)
+            right_speed: Right motor speed (-255 to 255)
+        
+        Returns:
+            True if command executed, False if blocked by emergency stop
+        """
+        if self.emergency_stopped:
+            # ⚠️ EMERGENCY STOP ACTIVE - Block all motor commands
+            self.driver.stop()
+            return False
+        
+        # Normal operation - execute command
+        self.driver.set_motors(left_speed, right_speed)
+        self._update_command_time()
+        return True
+    
+    def safe_turn_left(self, speed: int) -> bool:
+        """Safe turn left with emergency stop check"""
+        if self.emergency_stopped:
+            self.driver.stop()
+            return False
+        self.driver.turn_left(speed)
+        self._update_command_time()
+        return True
+    
+    def safe_turn_right(self, speed: int) -> bool:
+        """Safe turn right with emergency stop check"""
+        if self.emergency_stopped:
+            self.driver.stop()
+            return False
+        self.driver.turn_right(speed)
+        self._update_command_time()
+        return True
+    
     def stop(self):
         self.driver.stop()
         if self.current_mode == 'auto':
@@ -348,13 +389,20 @@ class AutoModeController:
                 if self.robot.current_mode != 'auto':
                     break
                 
-                frame = self.camera.capture_frame()
-                if frame is None:
+                frame_yuv = self.camera.capture_frame()
+                if frame_yuv is None:
                     time.sleep(0.1)
                     continue
                 
+                # ============================================================
+                # ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần YOLO
+                # ============================================================
+                # Lane detection sẽ dùng trực tiếp frame_yuv (lấy kênh Y)
+                # YOLO detection cần BGR → convert chỉ khi cần
+                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+                
                 # Detect traffic signs (logic only, no drawing)
-                detections, _ = self.detector.detect(frame)
+                detections, _ = self.detector.detect(frame_bgr)
                 sign_action = None
                 
                 if detections:
@@ -435,16 +483,26 @@ class AutoModeController:
                     
                     # Đi thẳng với tốc độ base
                     approach_speed = int(self.base_speed)
-                    self.robot.driver.set_motors(approach_speed, approach_speed)
+                    
+                    # ✅ SAFETY: Dùng safe_set_motors thay vì gọi trực tiếp driver
+                    if not self.robot.safe_set_motors(approach_speed, approach_speed):
+                        logger.warning("⚠️ EMERGENCY STOP active - Approach blocked")
+                        self.robot.current_state = 'EMERGENCY STOP'
+                        time.sleep(0.1)
+                        continue
                     
                     # Reset lane lost count
                     self.lane_lost_count = 0
                     time.sleep(0.03)
                     continue
                 
+                # ============================================================
                 # Lane detection (CHỈ chạy khi KHÔNG approaching turn sign)
+                # ✅ OPTIMIZED: Truyền RAW YUV420 vào lane_detector
+                # → lane_detector sẽ lấy trực tiếp kênh Y (CPU cost = 0)
+                # ============================================================
                 raw_error, x_line, center_x, lane_debug_frame = detect_line(
-                    frame, self.detection_config
+                    frame_yuv, self.detection_config
                 )
                 
                 # ✅ FIX RACE CONDITION: Resize và lưu debug frame với lock
@@ -481,7 +539,7 @@ class AutoModeController:
                             self.recovery_start_time = time.time()  # ✅ FIX: Dùng wall clock
                             self.recovery_attempts = 0
                         
-                        lane_found = self._perform_lane_recovery(frame)
+                        lane_found = self._perform_lane_recovery(frame_yuv)
                         
                         if lane_found:
                             logger.info("✅ Lane found! Resuming normal operation.")
@@ -545,7 +603,12 @@ class AutoModeController:
                 right_speed = max(-255, min(255, int(self.base_speed + correction)))
                 
                 # Send to motors
-                self.robot.driver.set_motors(left_speed, right_speed)
+                # ✅ SAFETY: Dùng safe_set_motors thay vì gọi trực tiếp driver
+                if not self.robot.safe_set_motors(left_speed, right_speed):
+                    logger.warning("⚠️ EMERGENCY STOP active - Auto mode blocked")
+                    self.robot.current_state = 'EMERGENCY STOP'
+                    time.sleep(0.1)
+                    continue
                 
                 time.sleep(0.03)
                 
@@ -557,13 +620,14 @@ class AutoModeController:
         self.robot.driver.stop()
         logger.info("Auto loop ended")
     
-    def _perform_lane_recovery(self, frame) -> bool:
+    def _perform_lane_recovery(self, frame_yuv) -> bool:
         """
         Perform lane recovery by scanning left-right
         
         ✅ FIX: Dùng wall clock time thay vì fake counter
+        ✅ OPTIMIZED: Nhận RAW YUV420, truyền trực tiếp vào lane_detector
         """
-        error, x_line, center_x, recovery_debug_frame = detect_line(frame, self.detection_config)
+        error, x_line, center_x, recovery_debug_frame = detect_line(frame_yuv, self.detection_config)
         
         # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery (với lock)
         if recovery_debug_frame is not None:
@@ -593,10 +657,16 @@ class AutoModeController:
                 return False
         
         if self.recovery_direction == 'left':
-            self.robot.driver.turn_left(self.recovery_scan_speed)
+            # ✅ SAFETY: Dùng safe_turn_left thay vì gọi trực tiếp driver
+            if not self.robot.safe_turn_left(self.recovery_scan_speed):
+                logger.warning("⚠️ EMERGENCY STOP active - Recovery blocked")
+                return False
             self.robot.current_state = f'SCANNING LEFT... ({elapsed_time:.1f}s)'
         else:
-            self.robot.driver.turn_right(self.recovery_scan_speed)
+            # ✅ SAFETY: Dùng safe_turn_right thay vì gọi trực tiếp driver
+            if not self.robot.safe_turn_right(self.recovery_scan_speed):
+                logger.warning("⚠️ EMERGENCY STOP active - Recovery blocked")
+                return False
             self.robot.current_state = f'SCANNING RIGHT... ({elapsed_time:.1f}s)'
         
         return False
@@ -796,13 +866,18 @@ class FollowModeController:
                 if self.robot.current_mode != 'follow':
                     break
                 
-                frame = self.camera.capture_frame()
-                if frame is None:
+                frame_yuv = self.camera.capture_frame()
+                if frame_yuv is None:
                     time.sleep(0.05)
                     continue
                 
+                # ============================================================
+                # ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần YOLO
+                # ============================================================
+                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+                
                 # Detect objects
-                detections, annotated_frame = self.detector.detect(frame)
+                detections, annotated_frame = self.detector.detect(frame_bgr)
                 
                 # ✅ FIX: Save debug frame với lock
                 with self.debug_frame_lock:
@@ -817,7 +892,7 @@ class FollowModeController:
                     target = max(valid_objs, key=lambda x: x['w'] * x['h'])
                     
                     # ===== EXTRACT TARGET INFO =====
-                    frame_h, frame_w = frame.shape[:2]
+                    frame_h, frame_w = frame_bgr.shape[:2]
                     center_x = frame_w / 2
                     
                     self.target_x = int(target['x'])
@@ -877,7 +952,12 @@ class FollowModeController:
                     right_speed = max(-255, min(255, right_speed))
                     
                     # ===== SEND TO MOTORS =====
-                    self.robot.driver.set_motors(left_speed, right_speed)
+                    # ✅ SAFETY: Dùng safe_set_motors thay vì gọi trực tiếp driver
+                    if not self.robot.safe_set_motors(left_speed, right_speed):
+                        logger.warning("⚠️ EMERGENCY STOP active - Follow mode blocked")
+                        self.robot.current_state = 'EMERGENCY STOP'
+                        time.sleep(0.1)
+                        continue
                     
                     # Update status
                     self.robot.current_state = status

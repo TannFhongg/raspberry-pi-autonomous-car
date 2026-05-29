@@ -143,10 +143,10 @@ class CameraManager:
         
         ✅ FIX: Không dùng lock để tránh blocking từ web stream
         ✅ Đồng thời cập nhật buffer cho web stream (ALWAYS update, no skip)
-        ✅ CRITICAL FIX: Convert YUV420 → BGR ngay sau capture để tránh format confusion
+        ✅ OPTIMIZED: Trả về RAW YUV420 để tận dụng ISP hardware
 
         Returns:
-            numpy array in BGR format (standard OpenCV), or None if error
+            numpy array in YUV420 format (raw from ISP), or None if error
         """
         if not self.running or self.camera is None:
             logger.warning("Camera not running")
@@ -160,40 +160,36 @@ class CameraManager:
             frame_yuv = self.camera.capture_array()
             
             # ============================================================
-            # 🔴 CRITICAL BUG FIX: YUV420 → BGR CONVERSION
+            # ✅ OPTIMIZED: TRẢ VỀ RAW YUV420 - KHÔNG CONVERT
             # ============================================================
             # Picamera2 với format='YUV420' trả về shape (H*3//2, W) - 2D array
             # Layout: Y plane (H×W) + U plane (H/2×W/2) + V plane (H/2×W/2)
             # 
-            # PHẢI convert sang BGR NGAY để:
-            # 1. YOLO inference đúng (YOLO cần BGR/RGB 3-channel)
-            # 2. Debug visualization đúng màu
-            # 3. Tránh format confusion trong toàn bộ pipeline
-            # 
-            # Lane detection sẽ tự convert BGR→Gray khi cần
+            # KIẾN TRÚC CHUẨN:
+            # 1. Lane detector: Lấy trực tiếp kênh Y (grayscale) - CPU cost = 0
+            # 2. YOLO detector: Convert YUV420→BGR chỉ khi cần - CPU cost minimal
+            # 3. Tận dụng tối đa ISP hardware (Y channel = grayscale miễn phí)
             # ============================================================
             
-            if self.format == 'YUV420':
-                # YUV420 planar format: shape = (height * 3 // 2, width)
-                # Convert to BGR for standard OpenCV processing
-                frame = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
-            else:
-                # Fallback: RGB888 or other formats
-                frame = frame_yuv
+            frame = frame_yuv  # Trả về raw YUV420
 
             # ============================================================
-            # ✅ FIX STALE FRAME: ALWAYS update buffer, lock chỉ để swap pointer
+            # ✅ THREAD SAFETY FIX: Copy frame trước khi assign vào buffer
             # ============================================================
-            # Thay vì trylock (có thể skip update), dùng blocking lock NGẮN
-            # Lock chỉ để swap pointer (< 1μs), KHÔNG block auto loop
+            # Problem: Nếu chỉ swap reference (latest_frame = frame):
+            #   1. Auto loop return frame và mutate nó (cv2.resize, cv2.line...)
+            #   2. capture_jpeg() đọc latest_frame → đang bị modify → race condition
+            #   3. Numpy array KHÔNG thread-safe khi đọc/ghi đồng thời
             # 
-            # Trade-off analysis:
-            # - Worst case: capture_jpeg() đang encode (5-10ms) → block 5-10ms
-            # - Auto loop: 30ms/frame → 5-10ms block = acceptable (vẫn đạt 20+ FPS)
-            # - Benefit: Web stream KHÔNG BAO GIỜ bị stale frame
+            # Solution: Copy frame trước khi assign vào buffer
+            #   1. Auto loop dùng frame original (không ảnh hưởng buffer)
+            #   2. Web stream dùng frame_copy (isolated, thread-safe)
+            #   3. Copy overhead: ~0.5ms cho 640x480x3 (acceptable)
             # ============================================================
+            frame_for_buffer = frame.copy()
+            
             with self.latest_frame_lock:
-                self.latest_frame = frame  # ← Không cần copy(), chỉ swap reference
+                self.latest_frame = frame_for_buffer  # ← Copy, không phải reference
 
             # Update FPS counter
             self.frame_count += 1
@@ -217,7 +213,7 @@ class CameraManager:
         
         ✅ FIX: Đọc từ buffer riêng (latest_frame) thay vì gọi capture_frame()
         → Không tranh giành camera với Auto Loop
-        ✅ FIXED: latest_frame giờ đã là BGR (converted trong capture_frame)
+        ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần (cho web stream)
         ✅ FIX STALE FRAME: Copy frame TRONG lock để tránh race condition
 
         Args:
@@ -240,17 +236,24 @@ class CameraManager:
             # 
             # Timeline:
             # 1. Lock → Copy frame (< 1ms) → Unlock
-            # 2. Encode JPEG outside lock (5-10ms, không block ai)
+            # 2. Convert YUV420→BGR (nếu cần) + Encode JPEG NGOÀI lock
             # ============================================================
             with self.latest_frame_lock:
                 if self.latest_frame is None:
                     return None
                 # Copy frame để encode NGOÀI lock
-                # Copy 640x480x3 = ~1MB, mất ~0.5-1ms (acceptable)
-                frame = self.latest_frame.copy()
+                frame_yuv = self.latest_frame.copy()
+
+            # ============================================================
+            # ✅ OPTIMIZED: Convert YUV420→BGR chỉ cho web stream
+            # ============================================================
+            if self.format == 'YUV420':
+                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+            else:
+                frame_bgr = frame_yuv
 
             # Encode JPEG NGOÀI lock (5-10ms, không block capture_frame)
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ret:
                 return buffer.tobytes()
         except Exception as e:

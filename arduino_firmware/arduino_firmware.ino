@@ -37,6 +37,12 @@ float distance = 0.0;
 unsigned long lastSensorRead = 0;
 unsigned long sensorReadInterval = 100; // Read sensors every 100ms (slower, only ultrasonic)
 
+// ===== SAFETY WATCHDOG =====
+// ✅ CRITICAL SAFETY: Auto-stop motors if no heartbeat from Raspberry Pi
+#define HEARTBEAT_TIMEOUT 2000  // 2 seconds without command = emergency stop
+unsigned long lastHeartbeat = 0;
+bool watchdogActive = false;  // Activate after first command received
+
 // ===== SETUP =====
 void setup() {
   // Initialize Serial Communication
@@ -65,6 +71,23 @@ void setup() {
 
 // ===== MAIN LOOP =====
 void loop() {
+  // ============================================================
+  // ✅ SAFETY WATCHDOG: Emergency stop if no heartbeat
+  // ============================================================
+  // If Raspberry Pi crashes or USB disconnects, motors MUST stop
+  // Check: Has it been > 2 seconds since last command?
+  // ============================================================
+  if (watchdogActive && (millis() - lastHeartbeat > HEARTBEAT_TIMEOUT)) {
+    // EMERGENCY STOP
+    if (leftSpeed != 0 || rightSpeed != 0) {
+      stopMotors();
+      // Send warning (if serial still works)
+      sendError("WATCHDOG TIMEOUT - Motors stopped");
+    }
+    // Keep checking but don't spam errors
+    lastHeartbeat = millis() - HEARTBEAT_TIMEOUT + 500; // Check again in 500ms
+  }
+  
   // Read sensors periodically
   if (millis() - lastSensorRead >= sensorReadInterval) {
     readSensors();
@@ -84,6 +107,14 @@ void processCommand() {
   json.trim();
   
   if (json.length() == 0) return;
+  
+  // ============================================================
+  // ✅ SAFETY: Update heartbeat on ANY command received
+  // ============================================================
+  lastHeartbeat = millis();
+  if (!watchdogActive) {
+    watchdogActive = true;  // Activate watchdog after first command
+  }
   
   StaticJsonDocument<200> doc;
   DeserializationError error = deserializeJson(doc, json);
@@ -113,6 +144,7 @@ void processCommand() {
     sendSensorData();
   }
   else if (strcmp(cmd, "PING") == 0) {
+    // PING is specifically for heartbeat/keepalive
     sendAck("PONG");
   }
   else {
