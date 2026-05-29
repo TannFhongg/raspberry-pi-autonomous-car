@@ -187,7 +187,6 @@ def video_feed():
 def debug_feed():
     """
     Debug video feed - shows processed frame based on current mode
-    Manual Mode: VO trajectory map (if available) or raw camera
     Auto Mode: Lane detection debug frame (resized 320x240)
     Follow Mode: Object tracking debug frame
     """
@@ -208,19 +207,15 @@ def debug_feed():
                 if robot_controller:
                     current_mode = robot_controller.current_mode
                     
-                    if current_mode == 'manual':
-                        # Manual mode: Ưu tiên hiển thị VO map
-                        vo_map = robot_controller.get_vo_map()
-                        if vo_map is not None:
-                            frame = vo_map
-                    
-                    elif current_mode == 'auto' and auto_controller:
+                    if current_mode == 'auto' and auto_controller:
                         # Auto mode: Lane detection debug
-                        frame = auto_controller.latest_debug_frame
+                        # ✅ FIX: Dùng get_debug_frame() thay vì đọc trực tiếp
+                        frame = auto_controller.get_debug_frame()
                     
                     elif current_mode == 'follow' and follow_controller:
                         # Follow mode: Object tracking debug
-                        frame = follow_controller.latest_debug_frame
+                        # ✅ FIX: Dùng get_debug_frame() thay vì đọc trực tiếp
+                        frame = follow_controller.get_debug_frame()
                 
                 # Fallback to raw camera if no debug frame available
                 if frame is None:
@@ -262,10 +257,10 @@ def debug_feed():
 
 @app.route("/set_mode")
 def set_mode():
-    """Set control mode (manual/auto/follow)"""
-    mode = request.args.get("mode", "manual")
+    """Set control mode (auto/follow only - manual mode removed)"""
+    mode = request.args.get("mode", "auto")
 
-    if mode not in ["manual", "auto", "follow"]:
+    if mode not in ["auto", "follow"]:
         return jsonify({"status": "error", "message": "Invalid mode"}), 400
 
     if robot_controller.set_mode(mode):
@@ -282,11 +277,6 @@ def set_mode():
                 follow_controller.start()
             if auto_controller:
                 auto_controller.stop()
-        else:  # manual
-            if auto_controller:
-                auto_controller.stop()
-            if follow_controller:
-                follow_controller.stop()
 
         # Emit state update
         socketio.emit("mode_update", {"mode": mode})
@@ -336,63 +326,7 @@ def set_follow_distance():
         return jsonify({"status": "error", "message": "Invalid distance value"}), 400
 
 
-# ===== ROBOT CONTROL COMMANDS =====
-
-
-@app.route("/forward")
-def forward():
-    """Move forward"""
-    if robot_controller.forward():
-        log_message("Command: FORWARD")
-        socketio.emit("sensor_update", get_sensor_data())
-        return jsonify({"status": "success", "command": "forward"})
-    else:
-        return (
-            jsonify({"status": "error", "message": "Cannot execute in current mode"}),
-            403,
-        )
-
-
-@app.route("/backward")
-def backward():
-    """Move backward"""
-    if robot_controller.backward():
-        log_message("Command: BACKWARD")
-        socketio.emit("sensor_update", get_sensor_data())
-        return jsonify({"status": "success", "command": "backward"})
-    else:
-        return (
-            jsonify({"status": "error", "message": "Cannot execute in current mode"}),
-            403,
-        )
-
-
-@app.route("/left")
-def left():
-    """Turn left"""
-    if robot_controller.left():
-        log_message("Command: LEFT")
-        socketio.emit("sensor_update", get_sensor_data())
-        return jsonify({"status": "success", "command": "left"})
-    else:
-        return (
-            jsonify({"status": "error", "message": "Cannot execute in current mode"}),
-            403,
-        )
-
-
-@app.route("/right")
-def right():
-    """Turn right"""
-    if robot_controller.right():
-        log_message("Command: RIGHT")
-        socketio.emit("sensor_update", get_sensor_data())
-        return jsonify({"status": "success", "command": "right"})
-    else:
-        return (
-            jsonify({"status": "error", "message": "Cannot execute in current mode"}),
-            403,
-        )
+# ===== ROBOT CONTROL COMMANDS (Manual mode removed) =====
 
 
 @app.route("/stop")
@@ -475,95 +409,7 @@ def clear_log():
 
 
 
-# ===== VISUAL ODOMETRY ENDPOINTS =====
 
-@app.route('/api/odometry/status', methods=['GET'])
-def get_odometry_status():
-    """
-    Get current odometry status
-    Returns: distance, velocity, position, quality
-    """
-    try:
-        if not hasattr(robot_controller, 'vo') or robot_controller.vo is None:
-            return jsonify({
-                'error': 'Visual Odometry not initialized',
-                'enabled': False
-            }), 404
-        
-        status = robot_controller.vo.get_status()
-        velocity = robot_controller.vo.get_velocity()
-        
-        return jsonify({
-            'enabled': True,
-            'distance_cm': float(status['position_y_cm']),
-            'position': {
-                'x_cm': float(status['position_x_cm']),
-                'y_cm': float(status['position_y_cm'])
-            },
-            'velocity': {
-                'x_cm_s': float(velocity[0]),
-                'y_cm_s': float(velocity[1])
-            },
-            'quality': float(status['tracking_quality']),
-            'is_tracking_good': bool(status['is_tracking_good']),
-            'num_features': int(status['num_features']),
-            'scale_factor': float(status['scale_factor'])
-        })
-    
-    except Exception as e:
-        logger.error(f"Error getting odometry status: {e}")
-        return jsonify({'error': str(e)}), 500
-
-# ===== VISUAL ODOMETRY ENDPOINTS =====
-@app.route('/api/odometry/reset', methods=['POST'])
-def reset_odometry():
-    """
-    Reset odometry (position back to 0)
-    """
-    try:
-        if hasattr(robot_controller, 'reset_odometry'):
-            robot_controller.reset_odometry()
-            return jsonify({
-                'status': 'success',
-                'message': 'Odometry reset'
-            })
-        else:
-            return jsonify({
-                'error': 'Reset method not available'
-            }), 404
-    
-    except Exception as e:
-        logger.error(f"Error resetting odometry: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/odometry/calibrate', methods=['POST'])
-def calibrate_odometry():
-    """
-    Calibrate odometry scale factor
-    Request body: {"distance_cm": 20, "measured_pixels": 400}
-    """
-    try:
-        data = request.get_json()
-        distance_cm = float(data.get('distance_cm', 0))
-        measured_pixels = float(data.get('measured_pixels', 0))
-        
-        if distance_cm <= 0 or measured_pixels <= 0:
-            return jsonify({
-                'error': 'Invalid calibration values'
-            }), 400
-        
-        robot_controller.vo.calibrate_scale(distance_cm, measured_pixels)
-        
-        return jsonify({
-            'status': 'success',
-            'scale_factor': robot_controller.vo.scale_factor,
-            'message': f'Calibrated: 1 pixel = {robot_controller.vo.scale_factor:.4f} cm'
-        })
-    
-    except Exception as e:
-        logger.error(f"Error calibrating odometry: {e}")
-        return jsonify({'error': str(e)}), 500
     
 
 # ===== SENSOR DATA =====

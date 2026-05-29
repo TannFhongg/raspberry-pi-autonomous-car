@@ -11,7 +11,7 @@ runs/
 dataset/
 data/
 models/
-
+*.md
 # Logs
 *.log
 # Json 

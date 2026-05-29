@@ -136,38 +136,13 @@
                     <i class="fas fa-gamepad"></i> CONTROL CENTER
                 </div>
                 <div class="panel-body control-body">
-                    <div class="control-left">
-                        <div class="control-pad" id="controlPad">
-                            <button class="ctrl-btn btn-up" id="btnForward">
-                                <i class="fas fa-chevron-up"></i>
-                            </button>
-                            <button class="ctrl-btn btn-left" id="btnLeft">
-                                <i class="fas fa-chevron-left"></i>
-                            </button>
-                            <button class="ctrl-btn btn-center" onclick="sendCommand('stop')">
-                                <i class="fas fa-circle"></i>
-                            </button>
-                            <button class="ctrl-btn btn-right" id="btnRight">
-                                <i class="fas fa-chevron-right"></i>
-                            </button>
-                            <button class="ctrl-btn btn-down" id="btnBackward">
-                                <i class="fas fa-chevron-down"></i>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="control-right">
+                    <div class="control-right" style="width: 100%;">
                         <!-- Mode Selection -->
                         <div class="control-item">
                             <label><i class="fas fa-cog"></i> Mode:</label>
                             <div class="mode-selector">
                                 <label class="mode-option">
-                                    <input type="radio" name="mode" value="manual" id="modeManual" checked
-                                        onchange="toggleMode()">
-                                    <span>Manual</span>
-                                </label>
-                                <label class="mode-option">
-                                    <input type="radio" name="mode" value="auto" id="modeAuto" onchange="toggleMode()">
+                                    <input type="radio" name="mode" value="auto" id="modeAuto" checked onchange="toggleMode()">
                                     <span>Auto</span>
                                 </label>
                                 <label class="mode-option">
@@ -224,64 +199,6 @@
 
             <!-- Row 3: Sensors -->
             <div class="grid-row-3">
-                <!-- Visual Odometry Status Card -->
-                <div class="col-md-6">
-                    <div class="card">
-                        <div class="card-header bg-info text-white">
-                            <h5 class="mb-0">📍 Visual Odometry</h5>
-                        </div>
-                        <div class="card-body">
-                            <div id="vo-status">
-                                <div class="row mb-2">
-                                    <div class="col-6">
-                                        <strong class="text-dark">Distance:</strong>
-                                    </div>
-                                    <div class="col-6">
-                                        <span id="vo-distance" class="text-dark font-weight-bold">0.0 cm</span>
-                                    </div>
-                                </div>
-
-                                <div class="row mb-2">
-                                    <div class="col-6">
-                                        <strong class="text-dark">Velocity:</strong>
-                                    </div>
-                                    <div class="col-6">
-                                        <span id="vo-velocity" class="text-dark font-weight-bold">0.0 cm/s</span>
-                                    </div>
-                                </div>
-
-                                <div class="row mb-2">
-                                    <div class="col-6">
-                                        <strong class="text-dark">Quality:</strong>
-                                    </div>
-                                    <div class="col-6">
-                                        <span id="vo-quality" class="text-dark font-weight-bold">N/A</span>
-                                    </div>
-                                </div>
-
-                                <div class="row mb-2">
-                                    <div class="col-6">
-                                        <strong class="text-dark">Position:</strong>
-                                    </div>
-                                    <div class="col-6">
-                                        <small class="text-dark">X: <span id="vo-pos-x" class="text-dark font-weight-bold">0.0</span> cm</small><br>
-                                        <small class="text-dark">Y: <span id="vo-pos-y" class="text-dark font-weight-bold">0.0</span> cm</small>
-                                    </div>
-                                </div>
-
-                                <div class="row">
-                                    <div class="col-12">
-                                        <button class="btn btn-sm btn-warning btn-block" onclick="resetOdometry()">
-                                            🔄 Reset Position
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-
                 <!-- Ultrasonic Sensor -->
                 <div class="panel sensor-panel">
                     <div class="panel-header">

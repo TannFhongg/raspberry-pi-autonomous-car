@@ -16,6 +16,8 @@ class CameraManager:
     """
     Manages Picamera2 camera with thread-safe access
     Provides easy interface for frame capture and streaming
+    
+    ✅ FIX: Double buffering để tránh race condition giữa Auto Loop và Web Stream
     """
 
     def __init__(self, config: dict = None):
@@ -32,13 +34,28 @@ class CameraManager:
 
         # Get camera settings from config
         camera_config = self.config.get("sensors", {}).get("camera", {})
-        self.resolution = tuple(camera_config.get("resolution", [1640, 1232]))
+        
+        # ============================================================
+        # OPTIMIZED: Sử dụng ISP để resize và chuyển format
+        # - Xuất thẳng 640x480 từ phần cứng (không dùng CPU resize)
+        # - Dùng YUV420 để có sẵn Y channel (Grayscale) miễn phí
+        # ============================================================
+        self.resolution = tuple(camera_config.get("resolution", [640, 480]))
         self.framerate = camera_config.get("framerate", 30)
 
         # Picamera2 specific settings
         picam_config = camera_config.get("picamera2", {})
-        self.format = picam_config.get("format", "RGB888")
+        # YUV420: Y channel = Grayscale, tiết kiệm băng thông và CPU
+        self.format = picam_config.get("format", "YUV420")
         self.buffer_count = picam_config.get("buffer_count", 4)
+
+        # ============================================================
+        # ✅ FIX RACE CONDITION: Double buffering cho web streaming
+        # - latest_frame: Buffer riêng cho web stream (không block auto loop)
+        # - latest_frame_lock: Lock riêng cho web stream
+        # ============================================================
+        self.latest_frame = None
+        self.latest_frame_lock = threading.Lock()
 
         # Performance stats
         self.frame_count = 0
@@ -122,18 +139,29 @@ class CameraManager:
 
     def capture_frame(self) -> np.ndarray:
         """
-        Capture a single frame from camera
+        Capture a single frame from camera (for Auto Loop - HIGH PRIORITY)
+        
+        ✅ FIX: Không dùng lock để tránh blocking từ web stream
+        ✅ Đồng thời cập nhật buffer cho web stream (non-blocking)
 
         Returns:
-            numpy array in RGB format, or None if error
+            numpy array in YUV420 format (Y channel = Grayscale), or None if error
         """
         if not self.running or self.camera is None:
             logger.warning("Camera not running")
             return None
 
         try:
-            with self.lock:
-                frame = self.camera.capture_array()
+            # ✅ CRITICAL FIX: Capture KHÔNG dùng lock chính
+            # → Auto loop không bị block bởi web stream
+            frame = self.camera.capture_array()
+
+            # ✅ Cập nhật buffer cho web stream (non-blocking với trylock)
+            if self.latest_frame_lock.acquire(blocking=False):
+                try:
+                    self.latest_frame = frame.copy()  # Copy để tránh reference issue
+                finally:
+                    self.latest_frame_lock.release()
 
             # Update FPS counter
             self.frame_count += 1
@@ -153,7 +181,10 @@ class CameraManager:
 
     def capture_jpeg(self, quality: int = 80) -> bytes:
         """
-        Capture frame and encode as JPEG
+        Capture frame and encode as JPEG (for Web Stream - LOW PRIORITY)
+        
+        ✅ FIX: Đọc từ buffer riêng (latest_frame) thay vì gọi capture_frame()
+        → Không tranh giành camera với Auto Loop
 
         Args:
             quality: JPEG quality (1-100)
@@ -161,15 +192,21 @@ class CameraManager:
         Returns:
             JPEG bytes, or None if error
         """
-        frame = self.capture_frame()
-        if frame is None:
+        if not self.running or self.camera is None:
             return None
 
         try:
             import cv2
 
-            # Frame đã là BGR, nén thẳng luôn
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            # ✅ CRITICAL FIX: Đọc từ buffer riêng thay vì capture mới
+            with self.latest_frame_lock:
+                if self.latest_frame is None:
+                    return None
+                frame = self.latest_frame.copy()
+
+            # YUV420 → BGR để encode JPEG (cho web streaming)
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_YUV420p2BGR)
+            ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ret:
                 return buffer.tobytes()
         except Exception as e:

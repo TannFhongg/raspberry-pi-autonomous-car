@@ -2,7 +2,7 @@
 const socket = io();
 
 // State variables
-let currentMode = 'manual'; // 'manual', 'auto', 'follow'
+let currentMode = 'auto'; // 'auto', 'follow' only
 let startTime = Date.now();
 let selectedColor = 'red';
 let followDistance = 50;
@@ -258,87 +258,7 @@ function updateLineSensors(sensors) {
     });
 }
 
-// ===== ROBOT CONTROL COMMANDS =====
-let commandInterval = null;  // Interval để gửi lệnh liên tục
 
-function sendCommand(command) {
-    // Check mode before sending command
-    if (currentMode !== 'manual') {
-        console.log('Cannot send command in ' + currentMode + ' mode');
-        addLogEntry(new Date().toLocaleTimeString(), 'WARNING',
-            'Manual control disabled in ' + currentMode.toUpperCase() + ' mode');
-        return;
-    }
-
-    fetch('/' + command)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Command failed');
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('Command sent:', command, 'Response:', data);
-            if (data.status === 'error') {
-                addLogEntry(new Date().toLocaleTimeString(), 'ERROR', data.message);
-            }
-        })
-        .catch(error => {
-            console.error('Error sending command:', error);
-            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
-                'Failed to send command: ' + command);
-        });
-}
-
-// ===== CONTINUOUS COMMAND (Giữ nút gửi lệnh liên tục) =====
-function startContinuousCommand(command) {
-    if (currentMode !== 'manual') return;
-    
-    // Gửi lệnh ngay lập tức
-    sendCommand(command);
-    
-    // Gửi lệnh liên tục mỗi 500ms để tránh watchdog timeout
-    if (commandInterval) clearInterval(commandInterval);
-    commandInterval = setInterval(() => {
-        sendCommand(command);
-    }, 500);
-}
-
-function stopContinuousCommand() {
-    if (commandInterval) {
-        clearInterval(commandInterval);
-        commandInterval = null;
-    }
-    sendCommand('stop');
-}
-
-// ===== BUTTON EVENT HANDLERS (Giữ nút) =====
-document.addEventListener('DOMContentLoaded', function() {
-    const controlButtons = {
-        'btnForward': 'forward',
-        'btnBackward': 'backward',
-        'btnLeft': 'left',
-        'btnRight': 'right'
-    };
-    
-    Object.keys(controlButtons).forEach(btnId => {
-        const btn = document.getElementById(btnId);
-        if (btn) {
-            // Mouse events
-            btn.addEventListener('mousedown', () => startContinuousCommand(controlButtons[btnId]));
-            btn.addEventListener('mouseup', stopContinuousCommand);
-            btn.addEventListener('mouseleave', stopContinuousCommand);
-            
-            // Touch events (mobile)
-            btn.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                startContinuousCommand(controlButtons[btnId]);
-            });
-            btn.addEventListener('touchend', stopContinuousCommand);
-            btn.addEventListener('touchcancel', stopContinuousCommand);
-        }
-    });
-});
 
 // ===== EMERGENCY STOP =====
 function emergencyStop() {
@@ -356,15 +276,12 @@ function emergencyStop() {
     }
 }
 
-// ===== MODE TOGGLE (FIXED) =====
+// ===== MODE TOGGLE (Auto and Follow only) =====
 function toggleMode() {
-    const modeManual = document.getElementById('modeManual');
     const modeAuto = document.getElementById('modeAuto');
     const modeFollow = document.getElementById('modeFollow');
 
-    if (modeManual.checked) {
-        currentMode = 'manual';
-    } else if (modeAuto.checked) {
+    if (modeAuto.checked) {
         currentMode = 'auto';
     } else if (modeFollow.checked) {
         currentMode = 'follow';
@@ -389,31 +306,16 @@ function toggleMode() {
 
 // ===== UPDATE MODE RADIO BUTTONS =====
 function updateModeRadioButtons() {
-    const modeManual = document.getElementById('modeManual');
     const modeAuto = document.getElementById('modeAuto');
     const modeFollow = document.getElementById('modeFollow');
 
-    modeManual.checked = (currentMode === 'manual');
     modeAuto.checked = (currentMode === 'auto');
     modeFollow.checked = (currentMode === 'follow');
 }
 
-// ===== UPDATE CONTROLS STATE =====
+// ===== UPDATE CONTROLS STATE (Manual controls removed) =====
 function updateControlsState() {
-    const controlPad = document.getElementById('controlPad');
-    const buttons = controlPad.querySelectorAll('.ctrl-btn');
     const followSettings = document.getElementById('followSettings');
-
-    // Disable manual control buttons if not in manual mode
-    buttons.forEach(btn => {
-        btn.disabled = (currentMode !== 'manual');
-    });
-
-    if (currentMode !== 'manual') {
-        controlPad.style.opacity = '0.4';
-    } else {
-        controlPad.style.opacity = '1';
-    }
 
     // Show/hide follow settings
     if (currentMode === 'follow') {
@@ -502,64 +404,7 @@ followDistanceSlider.addEventListener('change', function () {
         });
 });
 
-// ===== KEYBOARD CONTROL =====
-document.addEventListener('keydown', function (event) {
-    // Only allow keyboard control in manual mode
-    if (currentMode !== 'manual') {
-        return;
-    }
-    if (event.repeat) return;
-    switch (event.key) {
-        case 'ArrowUp':
-        case 'w':
-        case 'W':
-            sendCommand('forward');
-            event.preventDefault();
-            break;
-        case 'ArrowDown':
-        case 's':
-        case 'S':
-            sendCommand('backward');
-            event.preventDefault();
-            break;
-        case 'ArrowLeft':
-        case 'a':
-        case 'A':
-            sendCommand('left');
-            event.preventDefault();
-            break;
-        case 'ArrowRight':
-        case 'd':
-        case 'D':
-            sendCommand('right');
-            event.preventDefault();
-            break;
-        case ' ':
-            sendCommand('stop');
-            event.preventDefault();
-            break;
-    }
-});
 
-// ===== KEY RELEASE HANDLER =====
-document.addEventListener('keyup', function (event) {
-    if (currentMode !== 'manual') {
-        return;
-    }
-
-    const moveKeys = [
-        'ArrowUp', 'w', 'W',
-        'ArrowDown', 's', 'S',
-        'ArrowLeft', 'a', 'A',
-        'ArrowRight', 'd', 'D'
-    ];
-
-    if (moveKeys.includes(event.key)) {
-        console.log("Key released: " + event.key + " → Sending STOP");
-        sendCommand('stop');
-        event.preventDefault();
-    }
-});
 
 // ===== LOG MANAGEMENT =====
 function addLogEntry(time, level, message) {
@@ -618,106 +463,7 @@ document.getElementById('videoStream').addEventListener('error', function () {
         'Video stream connection lost');
 });
 
-// ===== VISUAL ODOMETRY UI UPDATES =====
-setInterval(updateOdometryStatus, 1000);
 
-async function updateOdometryStatus() {
-    try {
-        const response = await fetch('/api/odometry/status');
-
-        if (!response.ok) {
-            document.getElementById('vo-distance').textContent = 'N/A';
-            document.getElementById('vo-velocity').textContent = 'N/A';
-            document.getElementById('vo-quality').textContent = 'N/A';
-            return;
-        }
-
-        const data = await response.json();
-
-        if (data.enabled) {
-            document.getElementById('vo-distance').textContent =
-                data.distance_cm.toFixed(1) + ' cm';
-
-            const velocity = Math.sqrt(
-                Math.pow(data.velocity.x_cm_s, 2) +
-                Math.pow(data.velocity.y_cm_s, 2)
-            );
-            document.getElementById('vo-velocity').textContent =
-                velocity.toFixed(1) + ' cm/s';
-
-            const qualityBadge = document.getElementById('vo-quality');
-            const quality = data.quality;
-            qualityBadge.textContent = quality.toFixed(2);
-            qualityBadge.className = 'text-dark font-weight-bold';
-
-            document.getElementById('vo-pos-x').textContent =
-                data.position.x_cm.toFixed(1);
-            document.getElementById('vo-pos-y').textContent =
-                data.position.y_cm.toFixed(1);
-        }
-    } catch (error) {
-        console.error('Error updating odometry:', error);
-    }
-}
-
-async function resetOdometry() {
-    if (!confirm('Reset odometry position to (0, 0)?')) {
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/odometry/reset', {
-            method: 'POST'
-        });
-
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            alert('✅ Odometry reset successfully!');
-            updateOdometryStatus();
-        } else {
-            alert('❌ Failed to reset: ' + (data.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error resetting odometry:', error);
-        alert('❌ Network error');
-    }
-}
-
-function showCalibrationDialog() {
-    const distance = prompt('Enter distance traveled (cm):', '20');
-    const pixels = prompt('Enter measured pixels:', '400');
-
-    if (distance && pixels) {
-        calibrateOdometry(parseFloat(distance), parseFloat(pixels));
-    }
-}
-
-async function calibrateOdometry(distance_cm, measured_pixels) {
-    try {
-        const response = await fetch('/api/odometry/calibrate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                distance_cm: distance_cm,
-                measured_pixels: measured_pixels
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            alert(`✅ Calibration successful!\n${data.message}`);
-        } else {
-            alert('❌ Calibration failed: ' + (data.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error calibrating:', error);
-        alert('❌ Network error');
-    }
-}
 
 // ===== INITIALIZATION =====
 window.addEventListener('load', function () {
@@ -728,7 +474,7 @@ window.addEventListener('load', function () {
 
     // Initial log entry
     addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-        'LogisticsBot Control Panel initialized');
+        'Autonomous Car Control Panel initialized - Auto Mode active');
 });
 
 // THÊM ĐOẠN NÀY: Nhận dữ liệu Real-time từ Arduino

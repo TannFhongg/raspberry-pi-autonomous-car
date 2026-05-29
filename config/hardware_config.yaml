@@ -23,14 +23,17 @@ safety:
 
 # ============================================================================
 # CAMERA - Cấu hình Picamera2 (Raspberry Pi Camera Module 2)
+# OPTIMIZED: Sử dụng ISP để resize và chuyển format, giảm tải CPU
 # ============================================================================
 sensors:
   camera:
-    resolution: [1640, 1232]  # Độ phân giải [width, height] - Full FOV của Camera V2
+    resolution: [640, 480]    # Độ phân giải tối ưu cho lane detection
+                              # ISP resize phần cứng, KHÔNG dùng CPU!
     framerate: 30             # Số frame/giây
     
     picamera2:
-      format: 'RGB888'        # Định dạng màu (RGB888 = 24-bit RGB)
+      format: 'YUV420'        # YUV420: Y channel = Grayscale miễn phí
+                              # Tiết kiệm băng thông và CPU so với RGB888
       buffer_count: 4         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
       
       # Camera controls - Điều chỉnh chất lượng ảnh

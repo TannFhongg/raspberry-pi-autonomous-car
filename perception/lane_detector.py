@@ -7,28 +7,53 @@ Camera: Raspberry Pi Camera Module 2
 
 import cv2
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def detect_line(frame, config=None):
     """
     Phát hiện vạch KẺ ĐEN trên nền TRẮNG (bìa trắng)
+    OPTIMIZED: Nhận YUV420 từ ISP, trích xuất Y channel (Grayscale) miễn phí
     
     Thông số thực tế:
     - Lane width: 38cm
     - Robot width: 15cm
-    - Input: Any resolution (sẽ tự động resize về 640x480)
+    - Input: YUV420 640x480 từ Picamera2 ISP (KHÔNG CẦN RESIZE!)
     - Line color: BLACK on WHITE background
     """
     
     # ============================================================
-    # BƯỚC 0: RESIZE VỀ 640x480 CHUẨN (Quan trọng!)
+    # BƯỚC 0: XỬ LÝ FORMAT - TÁCH Y CHANNEL (GRAYSCALE)
     # ============================================================
-    original_height, original_width = frame.shape[:2]
+    # YUV420 format: Y plane (Grayscale) ở đầu, kích thước = width * height
+    # U và V planes ở sau, mỗi cái = width * height / 4
     
-    # Nếu không phải 640x480, resize về chuẩn
-    if original_width != 640 or original_height != 480:
-        frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
-        print(f"[INFO] Resized from {original_width}x{original_height} to 640x480")
+    height, width = frame.shape[:2]
+    
+    # Kiểm tra format: Nếu là YUV420, trích xuất Y channel
+    if len(frame.shape) == 2:
+        # Đã là grayscale (Y channel only)
+        gray = frame
+    elif frame.shape[0] == int(height * 1.5):
+        # YUV420: Y plane chiếm 2/3 đầu
+        gray = frame[:height, :].copy()
+    else:
+        # Fallback: BGR/RGB format (từ config cũ hoặc test)
+        if frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+    
+    # Đảm bảo kích thước đúng 640x480
+    if gray.shape != (480, 640):
+        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
+        # ✅ FIX: Dùng logger thay vì print() để tránh blocking I/O trong production loop
+        logger.warning(f"Frame không phải 640x480, đã resize: {gray.shape}")
+    
+    height, width = 480, 640  # Cố định
+    center_x = width // 2
     
     # ============================================================
     # Cấu hình mặc định - TUNED cho vạch đen trên nền trắng
@@ -45,29 +70,18 @@ def detect_line(frame, config=None):
             'blur_kernel': 7,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
         }
 
-    height, width = frame.shape[:2]  # Giờ luôn là 640x480
-    center_x = width // 2
-    
     # ============================================================
     # LANE WIDTH PIXELS - ĐÃ CALIBRATE CHO 640x480
     # ============================================================
-    # Công thức ước tính:
-    # - Camera nhìn từ trên cao ~20cm, góc nhìn ~62 degrees (Camera V2)
-    # - Tại đáy ảnh (gần xe), 38cm lane ≈ 200-250 pixels
-    # QUAN TRỌNG: Cần chạy calibration để lấy số chính xác!
-    
     LANE_WIDTH_PIXELS = 389  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
     
-    # Debug frame
-    frame_debug = frame.copy()
+    # Debug frame - Chuyển sang BGR để vẽ màu
+    frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     cv2.line(frame_debug, (center_x, 0), (center_x, height), (0, 255, 255), 2)
 
     # ============================================================
     # 1. TIỀN XỬ LÝ ẢNH - CHO NỀN TRẮNG, VẠCH ĐEN
     # ============================================================
-    
-    # Chuyển sang grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # ĐẢO NGƯỢC: Vạch đen → trắng (Canny hoạt động tốt hơn)
     gray_inverted = cv2.bitwise_not(gray)
@@ -262,19 +276,34 @@ def detect_line_black_adaptive(frame):
     """
     Phương pháp dự phòng: ADAPTIVE THRESHOLD
     Tốt hơn khi ánh sáng không đều hoặc Hough thất bại
+    OPTIMIZED: Nhận YUV420, trích xuất Y channel
     """
-    # Resize về 640x480 nếu cần
-    if frame.shape[1] != 640:
-        frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
-    
+    # ============================================================
+    # XỬ LÝ FORMAT - TÁCH Y CHANNEL
+    # ============================================================
     height, width = frame.shape[:2]
+    
+    if len(frame.shape) == 2:
+        gray = frame
+    elif frame.shape[0] == int(height * 1.5):
+        # YUV420: Lấy Y plane
+        gray = frame[:height, :].copy()
+    else:
+        # Fallback: BGR format
+        if frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+    
+    # Đảm bảo 640x480
+    if gray.shape != (480, 640):
+        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
+    
+    height, width = 480, 640
     center_x = width // 2
-    LANE_WIDTH_PIXELS = 240  # Cùng giá trị với detect_line()
+    LANE_WIDTH_PIXELS = 389  # Cùng giá trị với detect_line()
     
-    frame_debug = frame.copy()
-    
-    # Chuyển sang grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     
     # Làm mờ
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -363,15 +392,32 @@ def detect_line_black_adaptive(frame):
 def calibrate_lane_width(frame, show_result=False):
     """
     Calibration tool - Đo 38cm lane thành pixels
+    OPTIMIZED: Nhận YUV420, trích xuất Y channel
     Đã sửa: KHÔNG dùng cv2.imshow() (không có màn hình)
     """
-    # Resize về 640x480 nếu cần
-    if frame.shape[1] != 640:
-        frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
-    
+    # ============================================================
+    # XỬ LÝ FORMAT - TÁCH Y CHANNEL
+    # ============================================================
     height, width = frame.shape[:2]
     
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if len(frame.shape) == 2:
+        gray = frame
+    elif frame.shape[0] == int(height * 1.5):
+        # YUV420: Lấy Y plane
+        gray = frame[:height, :].copy()
+    else:
+        # Fallback: BGR format
+        if frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+    
+    # Đảm bảo 640x480
+    if gray.shape != (480, 640):
+        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
+    
+    height, width = 480, 640
+    
     gray_inv = cv2.bitwise_not(gray)
     edges = cv2.Canny(gray_inv, 40, 120)
     
@@ -381,7 +427,7 @@ def calibrate_lane_width(frame, show_result=False):
     # Tìm đường thẳng
     lines = cv2.HoughLinesP(edges, 1, np.pi/180, 25, minLineLength=35, maxLineGap=20)
     
-    frame_calib = frame.copy()
+    frame_calib = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     
     if lines is not None:
         # Vẽ tất cả lines

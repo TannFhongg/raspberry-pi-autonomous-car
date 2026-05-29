@@ -39,8 +39,8 @@ class RobotController:
         self.config = config
         
         # Current state
-        self.current_mode = 'manual'
-        self.current_state = 'IDLE'
+        self.current_mode = 'auto'
+        self.current_state = 'AUTO MODE'
         self.current_speed = 90
         
         # Safety
@@ -65,18 +65,6 @@ class RobotController:
         except Exception as e:
             logger.error(f"❌ IMU initialization failed: {e}")
             self.imu = None
-
-        # Visual Odometry (chạy ngầm, chỉ hoạt động khi manual mode)
-        vo_config = config.get('visual_odometry', {})
-        scale = vo_config.get('scale_factor', 0.05)
-        self.vo = VisualOdometry(scale_factor=scale)
-        self.vo_map = None  # Ảnh bản đồ trajectory
-        self.vo_camera = None  # Camera riêng cho VO
-        
-        # Start VO background thread
-        self.vo_thread = threading.Thread(target=self._vo_loop, daemon=True)
-        self.vo_thread.start()
-        logger.info("✅ Visual Odometry initialized (background thread)")
 
         logger.info("Robot Controller initialized")
     
@@ -170,14 +158,12 @@ class RobotController:
         self.driver.stop()
     
     def set_mode(self, mode: str):
-        if mode in ['manual', 'auto', 'follow']:
+        if mode in ['auto', 'follow']:
             self.current_mode = mode
             if mode == 'auto':
                 self.current_state = 'AUTO MODE'
             elif mode == 'follow':
                 self.current_state = 'FOLLOW MODE'
-            else:
-                self.current_state = 'IDLE'
             logger.info(f"Mode changed to: {mode}")
             return True
         return False
@@ -186,45 +172,9 @@ class RobotController:
         self.current_speed = max(0, min(255, speed))
         logger.info(f"Speed set to: {self.current_speed}")
     
-    def forward(self):
-        if not self._check_manual_mode():
-            return False
-        self.driver.forward(self.current_speed)
-        self.current_state = 'MOVING FORWARD'
-        self._update_command_time()
-        return True
-    
-    def backward(self):
-        if not self._check_manual_mode():
-            return False
-        self.driver.backward(self.current_speed)
-        self.current_state = 'MOVING BACKWARD'
-        self._update_command_time()
-        return True
-    
-    def left(self):
-        if not self._check_manual_mode():
-            return False
-        turn_speed = int(self.current_speed * 0.8)
-        self.driver.turn_left(turn_speed)
-        self.current_state = 'TURNING LEFT'
-        self._update_command_time()
-        return True
-    
-    def right(self):
-        if not self._check_manual_mode():
-            return False
-        turn_speed = int(self.current_speed * 0.8)
-        self.driver.turn_right(turn_speed)
-        self.current_state = 'TURNING RIGHT'
-        self._update_command_time()
-        return True
-    
     def stop(self):
         self.driver.stop()
-        if self.current_mode == 'manual':
-            self.current_state = 'STOPPED'
-        elif self.current_mode == 'auto':
+        if self.current_mode == 'auto':
             self.current_state = 'AUTO MODE'
         elif self.current_mode == 'follow':
             self.current_state = 'FOLLOW MODE'
@@ -258,91 +208,12 @@ class RobotController:
             'imu_status': imu_status
         }
     
-    def _check_manual_mode(self) -> bool:
-        if self.emergency_stopped:
-            logger.warning("Cannot execute: Emergency stop active")
-            return False
-        if self.current_mode != 'manual':
-            logger.warning(f"Cannot execute: Not in manual mode (current: {self.current_mode})")
-            return False
-        return True
-    
     def _update_command_time(self):
         self.last_command_time = time.time()
     
     def _watchdog(self):
         while self.running:
             time.sleep(0.5)
-            age = time.time() - self.last_command_time
-            
-            if age > self.timeout and self.current_mode == 'manual':
-                left, right = self.driver.get_speeds()
-                if left != 0 or right != 0:
-                    logger.warning(f"Command timeout ({age:.1f}s) - Auto stopping")
-                    self.stop()
-            
-            if self.current_state in ['MOVING FORWARD', 'MOVING BACKWARD', 
-                                     'TURNING LEFT', 'TURNING RIGHT']:
-                left, right = self.driver.get_speeds()
-                if left == 0 and right == 0:
-                    self.current_state = 'IDLE'
-
-    def _vo_loop(self):
-        """
-        Visual Odometry background loop
-        CHỈ chạy khi mode == 'manual' để tiết kiệm CPU
-        """
-        logger.info("🔄 VO background thread started")
-        
-        while self.running:
-            try:
-                if self.current_mode == 'manual':
-                    # Lấy camera (lazy init)
-                    if self.vo_camera is None:
-                        try:
-                            self.vo_camera = get_web_camera(self.config)
-                            if not self.vo_camera.is_running():
-                                self.vo_camera.start()
-                        except Exception as e:
-                            logger.error(f"❌ VO camera init error: {e}")
-                            time.sleep(1.0)
-                            continue
-                    
-                    # Capture frame
-                    frame = self.vo_camera.capture_frame()
-                    if frame is not None:
-                        # Resize xuống 320x240 để VO chạy nhanh
-                        frame_small = cv2.resize(frame, (320, 240))
-                        
-                        # Process frame (VO nhận BGR, tự convert sang grayscale)
-                        self.vo.process_frame(frame_small)
-                        
-                        # Vẽ debug frame với features
-                        self.vo_map = self.vo.draw_features(frame_small)
-                    
-                    time.sleep(0.1)  # ~10 FPS cho VO
-                    
-                else:
-                    # Không phải manual mode -> ngủ dài để tiết kiệm CPU
-                    self.vo_map = None  # Clear map khi không dùng
-                    time.sleep(1.0)
-                    
-            except Exception as e:
-                logger.error(f"❌ VO loop error: {e}")
-                time.sleep(1.0)
-        
-        logger.info("🔄 VO background thread stopped")
-
-    def get_vo_map(self):
-        """Get current VO trajectory map (for display in manual mode)"""
-        return self.vo_map
-
-    def reset_odometry(self):
-        """Reset visual odometry tracking"""
-        if hasattr(self, 'vo') and self.vo is not None:
-            self.vo.reset()
-            self.vo_map = None
-            logger.info("🔄 Visual Odometry reset")
 
     def cleanup(self):
         self.running = False
@@ -419,6 +290,12 @@ class AutoModeController:
         self.filtered_error = 0.0
         self.smoothing_factor = 0.5  # Hệ số làm mượt (0.0-1.0)
         
+        # ===== TIMING FIX: Dynamic dt calculation =====
+        self.last_time = None  # Track thời gian thực tế giữa các iteration
+        
+        # ===== FIX RACE CONDITION: Lock cho latest_debug_frame =====
+        # Flask /debug_feed đọc frame này → cần lock để tránh corrupt
+        self.debug_frame_lock = threading.Lock()
         self.latest_debug_frame = None
         self.latest_error = 0
         self.latest_correction = 0
@@ -433,6 +310,9 @@ class AutoModeController:
             self.pid.reset()
             self.lane_lost_count = 0
             self.base_speed = self.default_speed
+            
+            # ===== TIMING FIX: Reset timing khi start =====
+            self.last_time = None  # Reset để tính dt từ đầu
             
             self.running = True
             self.thread = threading.Thread(target=self._auto_loop, daemon=True)
@@ -567,11 +447,15 @@ class AutoModeController:
                     frame, self.detection_config
                 )
                 
-                # Resize lane debug frame to 320x240 for reduced lag
+                # ✅ FIX RACE CONDITION: Resize và lưu debug frame với lock
+                # → Flask /debug_feed không đọc frame đang bị replace
                 if lane_debug_frame is not None:
-                    self.latest_debug_frame = cv2.resize(lane_debug_frame, (320, 240))
+                    resized_frame = cv2.resize(lane_debug_frame, (320, 240))
+                    with self.debug_frame_lock:
+                        self.latest_debug_frame = resized_frame
                 else:
-                    self.latest_debug_frame = None
+                    with self.debug_frame_lock:
+                        self.latest_debug_frame = None
                 
                 # Lane validity check
                 is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
@@ -639,9 +523,19 @@ class AutoModeController:
                 if not detections:
                     self.robot.current_state = f'FOLLOWING LANE (Error: {self.latest_error:.0f}px)'
                 
-                # PID control (sử dụng filtered_error thay vì raw_error)
+                # ===== PID CONTROL với DYNAMIC dt =====
                 current_time = time.time()
-                dt = 0.05
+                
+                # Tính dt thực tế từ iteration trước
+                if self.last_time is None:
+                    # Iteration đầu tiên: dùng giá trị mặc định
+                    dt = 0.03  # Khớp với time.sleep(0.03) ở cuối loop
+                else:
+                    dt = current_time - self.last_time
+                    # Safety check: tránh dt quá nhỏ hoặc quá lớn
+                    dt = max(0.01, min(0.2, dt))  # Clamp dt trong khoảng 10ms-200ms
+                
+                self.last_time = current_time
                 
                 correction = self.pid.compute(self.filtered_error, dt)
                 self.latest_correction = correction
@@ -667,9 +561,11 @@ class AutoModeController:
         """Perform lane recovery by scanning left-right"""
         error, x_line, center_x, recovery_debug_frame = detect_line(frame, self.detection_config)
         
-        # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery
+        # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery (với lock)
         if recovery_debug_frame is not None:
-            self.latest_debug_frame = cv2.resize(recovery_debug_frame, (320, 240))
+            resized_frame = cv2.resize(recovery_debug_frame, (320, 240))
+            with self.debug_frame_lock:
+                self.latest_debug_frame = resized_frame
         
         if abs(error) <= self.MAX_ERROR_THRESHOLD:
             return True
@@ -700,7 +596,13 @@ class AutoModeController:
         return False
     
     def get_debug_frame(self):
-        return self.latest_debug_frame
+        """
+        Get latest debug frame (thread-safe)
+        
+        ✅ FIX: Thêm lock để Flask không đọc frame đang bị replace
+        """
+        with self.debug_frame_lock:
+            return self.latest_debug_frame
     
     def get_pid_status(self):
         return {
@@ -791,7 +693,9 @@ class FollowModeController:
         self.confidence = 0
         self.target_distance = 0
         
-        # Latest debug frame
+        # ===== FIX RACE CONDITION: Lock cho latest_debug_frame =====
+        # Flask /debug_feed đọc frame này → cần lock để tránh corrupt
+        self.debug_frame_lock = threading.Lock()
         self.latest_debug_frame = None
         
         logger.info(f"✅ Improved Follow Mode initialized (Target: {self.TARGET_SIZE}px)")
@@ -853,8 +757,13 @@ class FollowModeController:
         }
     
     def get_debug_frame(self):
-        """Get annotated debug frame"""
-        return self.latest_debug_frame
+        """
+        Get annotated debug frame (thread-safe)
+        
+        ✅ FIX: Thêm lock để Flask không đọc frame đang bị replace
+        """
+        with self.debug_frame_lock:
+            return self.latest_debug_frame
     
     def _init_shared_camera(self) -> bool:
         try:
@@ -889,8 +798,9 @@ class FollowModeController:
                 # Detect objects
                 detections, annotated_frame = self.detector.detect(frame)
                 
-                # Save debug frame
-                self.latest_debug_frame = annotated_frame
+                # ✅ FIX: Save debug frame với lock
+                with self.debug_frame_lock:
+                    self.latest_debug_frame = annotated_frame
                 
                 # Filter by target color
                 target_class = self.color_map.get(self.target_color_name)
@@ -967,48 +877,50 @@ class FollowModeController:
                     self.robot.current_state = status
                     
                     # ===== DRAW ENHANCED DEBUG INFO =====
-                    if self.latest_debug_frame is not None:
-                        h, w = self.latest_debug_frame.shape[:2]
-                        
-                        # Draw target size zone (green circle)
-                        cv2.circle(self.latest_debug_frame, 
-                                  (int(center_x), int(frame_h / 2)), 
-                                  self.TARGET_SIZE, (0, 255, 0), 2)
-                        cv2.putText(self.latest_debug_frame, 
-                                   f"Target: {self.TARGET_SIZE}px", 
-                                   (int(center_x) - self.TARGET_SIZE + 10, 
-                                    int(frame_h / 2) - self.TARGET_SIZE - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                        
-                        # Draw center line
-                        cv2.line(self.latest_debug_frame, 
-                                (int(center_x), 0), 
-                                (int(center_x), h), 
-                                (0, 255, 255), 1)
-                        
-                        # Draw object to center arrow
-                        cv2.arrowedLine(self.latest_debug_frame,
-                                       (int(center_x), h - 50),
-                                       (self.target_x, h - 50),
-                                       (255, 0, 255), 3, tipLength=0.3)
-                        
-                        # Draw info panel
-                        info_y = 30
-                        info_lines = [
-                            f"Mode: FOLLOW",
-                            f"Target: {self.target_color_name.upper()}",
-                            f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
-                            f"H-Error: {error_horizontal:.0f}px",
-                            f"D-Error: {error_distance:.0f}px",
-                            f"L-Speed: {left_speed:+4d}",
-                            f"R-Speed: {right_speed:+4d}"
-                        ]
-                        
-                        for line in info_lines:
-                            cv2.putText(self.latest_debug_frame, line,
-                                       (10, info_y),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                            info_y += 20
+                    # ✅ FIX: Vẽ lên debug frame với lock
+                    with self.debug_frame_lock:
+                        if self.latest_debug_frame is not None:
+                            h, w = self.latest_debug_frame.shape[:2]
+                            
+                            # Draw target size zone (green circle)
+                            cv2.circle(self.latest_debug_frame, 
+                                      (int(center_x), int(frame_h / 2)), 
+                                      self.TARGET_SIZE, (0, 255, 0), 2)
+                            cv2.putText(self.latest_debug_frame, 
+                                       f"Target: {self.TARGET_SIZE}px", 
+                                       (int(center_x) - self.TARGET_SIZE + 10, 
+                                        int(frame_h / 2) - self.TARGET_SIZE - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                            
+                            # Draw center line
+                            cv2.line(self.latest_debug_frame, 
+                                    (int(center_x), 0), 
+                                    (int(center_x), h), 
+                                    (0, 255, 255), 1)
+                            
+                            # Draw object to center arrow
+                            cv2.arrowedLine(self.latest_debug_frame,
+                                           (int(center_x), h - 50),
+                                           (self.target_x, h - 50),
+                                           (255, 0, 255), 3, tipLength=0.3)
+                            
+                            # Draw info panel
+                            info_y = 30
+                            info_lines = [
+                                f"Mode: FOLLOW",
+                                f"Target: {self.target_color_name.upper()}",
+                                f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
+                                f"H-Error: {error_horizontal:.0f}px",
+                                f"D-Error: {error_distance:.0f}px",
+                                f"L-Speed: {left_speed:+4d}",
+                                f"R-Speed: {right_speed:+4d}"
+                            ]
+                            
+                            for line in info_lines:
+                                cv2.putText(self.latest_debug_frame, line,
+                                           (10, info_y),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                                info_y += 20
                 
                 else:
                     # No target found - STOP and SEARCH
@@ -1018,13 +930,14 @@ class FollowModeController:
                     self.target_w = 0
                     self.target_h = 0
                     
-                    # Draw search message
-                    if self.latest_debug_frame is not None:
-                        h, w = self.latest_debug_frame.shape[:2]
-                        cv2.putText(self.latest_debug_frame,
-                                   f"SEARCHING {self.target_color_name.upper()}...",
-                                   (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    # ✅ FIX: Draw search message với lock
+                    with self.debug_frame_lock:
+                        if self.latest_debug_frame is not None:
+                            h, w = self.latest_debug_frame.shape[:2]
+                            cv2.putText(self.latest_debug_frame,
+                                       f"SEARCHING {self.target_color_name.upper()}...",
+                                       (10, 30),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 
                 time.sleep(0.05)
                 
