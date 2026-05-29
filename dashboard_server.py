@@ -568,7 +568,11 @@ HTML_TEMPLATE = """
 
 
 def camera_thread():
-    """Camera capture thread - Chạy liên tục trong background"""
+    """
+    Camera capture thread - Chạy liên tục trong background
+    
+    ✅ FIX: Dùng YUV420 format consistent với camera_manager.py
+    """
     global current_frame, current_debug_frame, current_error, lane_status, lane_params
     
     if not CAMERA_AVAILABLE:
@@ -577,19 +581,30 @@ def camera_thread():
     
     try:
         picam2 = Picamera2()
+        
+        # ============================================================
+        # ✅ FIX: Dùng YUV420 format consistent với camera_manager.py
+        # ============================================================
+        # Thay vì RGB888, dùng YUV420 như main system
+        # Benefit: Consistent format convention, tiết kiệm băng thông
+        # ============================================================
         config = picam2.create_preview_configuration(
-            main={"size": (1640, 1232), "format": "RGB888"}
+            main={"size": (640, 480), "format": "YUV420"}  # ← Changed from RGB888
         )
         picam2.configure(config)
         picam2.start()
         
-        print("✅ Camera started")
+        print("✅ Camera started (YUV420 format)")
         time.sleep(2)  # Warm-up
         
         while True:
-            # Capture frame
-            frame_rgb = picam2.capture_array()
-            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+            # Capture frame (YUV420 planar format)
+            frame_yuv = picam2.capture_array()
+            
+            # ============================================================
+            # ✅ FIX: Convert YUV420 → BGR (consistent với camera_manager)
+            # ============================================================
+            frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
             
             # Detect lane with current parameters
             error, x_line, center_x, debug_frame = detect_line(frame_bgr, lane_params)

@@ -26,11 +26,19 @@ class ObjectDetector:
         """
         Nhận diện vật thể - KHÔNG vẽ bounding box
         Chỉ trả về danh sách detections và frame gốc
+        
+        ✅ CRITICAL BUG FIX: Frame giờ luôn là BGR (converted từ YUV420 trong camera_manager)
+        → YOLO inference đúng, không còn color confusion
         """
         if self.model is None or frame is None:
             return [], frame
 
-        # Inference
+        # ============================================================
+        # ✅ FIXED: Frame đã là BGR standard từ camera_manager
+        # YOLO tự động xử lý BGR → RGB internally, không cần convert
+        # ============================================================
+        
+        # Inference với BGR frame (YOLO handles BGR→RGB conversion)
         results = self.model(frame, imgsz=640, conf=self.conf_threshold, verbose=False)
         
         # Trích xuất thông tin detection (KHÔNG vẽ gì lên frame)

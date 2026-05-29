@@ -10,6 +10,7 @@ import threading
 import time
 import logging
 from typing import Optional, Dict, Callable
+from queue import Queue, Empty
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,11 @@ class ArduinoDriver:
         
         # Callbacks
         self.sensor_callback: Optional[Callable] = None
+        
+        # ✅ FIX RACE CONDITION: Response queue cho wait_response=True
+        # _read_loop sẽ push responses vào queue này
+        # send_command() sẽ pop từ queue thay vì poll serial trực tiếp
+        self.response_queue: Queue = Queue(maxsize=10)
         
         # Thread control
         self.running = False
@@ -117,7 +123,9 @@ class ArduinoDriver:
     
     def send_command(self, command: Dict, wait_response: bool = True) -> Optional[Dict]:
         """
-        Send JSON command to Arduino (ĐÃ SỬA LỖI LOGIC)
+        Send JSON command to Arduino
+        
+        ✅ FIX RACE CONDITION: Dùng response queue thay vì poll serial trực tiếp
         
         Args:
             command: Command dictionary
@@ -126,9 +134,6 @@ class ArduinoDriver:
         Returns:
             Response dictionary or None
         """
-        # ===== SỬA LỖI 1: Lỗi "Con gà & Quả trứng" =====
-        # Chỉ kiểm tra 'self.serial'. 
-        # 'self.connected' chỉ được set = True SAU KHI PING thành công.
         if not self.serial:
             logger.warning("Cannot send command: Serial port not open")
             return None
@@ -145,44 +150,20 @@ class ArduinoDriver:
             
             # Wait for response if requested
             if wait_response:
-                # Tăng thời gian chờ PING lên 3 giây (an toàn hơn)
-                timeout = time.time() + 3.0 
-                
-                while time.time() < timeout:
-                    if self.serial.in_waiting > 0:
-                        line = self.serial.readline().decode('utf-8', errors='ignore').strip()
-                        
-                        # Bỏ qua các dòng trống
-                        if not line:
-                            continue
-                            
-                        try:
-                            response = json.loads(line)
-                            
-                            # ===== SỬA LỖI 2: Lỗi "Race Condition" =====
-                            
-                            # Chúng ta đang tìm tin nhắn 'status: ok', KHÔNG phải tin nhắn 'distance'
-                            if 'status' in response and response['status'] == 'ok':
-                                logger.debug(f"Received ACK (PONG): {response}")
-                                return response  # Tìm thấy! Trả về thành công.
-                            
-                            # Nếu đây là tin nhắn cảm biến, hãy bỏ qua và tiếp tục lắng nghe
-                            elif 'distance' in response:
-                                logger.debug(f"Ignoring sensor data while waiting for ACK: {response}")
-                                continue
-                            
-                            # Nếu đó là một JSON lạ khác, hãy bỏ qua
-                            else:
-                                logger.warning(f"Ignoring unknown JSON while waiting for ACK: {response}")
-                                continue
-                            
-                        except json.JSONDecodeError:
-                            logger.warning(f"Invalid JSON received (ignoring): {line}")
-                    
-                    time.sleep(0.01)  # Chờ một chút trước khi kiểm tra lại
-                
-                logger.warning(f"Command response timeout (Did not receive 'status: ok' for {command})")
-                return None
+                # ============================================================
+                # ✅ FIX: Đọc từ response_queue thay vì poll serial
+                # ============================================================
+                # _read_loop sẽ push 'status' responses vào queue
+                # Không có race condition vì chỉ _read_loop đọc serial
+                # ============================================================
+                try:
+                    # Wait up to 3 seconds for response
+                    response = self.response_queue.get(timeout=3.0)
+                    logger.debug(f"Received ACK: {response}")
+                    return response
+                except Empty:
+                    logger.warning(f"Command response timeout: {command}")
+                    return None
             
             return {'status': 'sent'}
             
@@ -206,8 +187,8 @@ class ArduinoDriver:
         
         command = {
             'cmd': 'MOVE',
-            'left': right_speed,
-            'right': left_speed
+            'left': left_speed,
+            'right': right_speed
         }
         
         self.send_command(command, wait_response=False)
@@ -256,7 +237,11 @@ class ArduinoDriver:
         self.sensor_callback = callback
     
     def _read_loop(self):
-        """Background thread to read sensor data from Arduino"""
+        """
+        Background thread to read sensor data from Arduino
+        
+        ✅ FIX RACE CONDITION: Push 'status' responses vào queue cho send_command()
+        """
         logger.info("Arduino read loop started (camera-only mode)")
         
         while self.running:
@@ -268,20 +253,37 @@ class ArduinoDriver:
                         try:
                             data = json.loads(line)
                             
-                            # Check if it's sensor data
-                            if 'distance' in data:
+                            # ============================================================
+                            # ✅ FIX: Route messages dựa trên type
+                            # ============================================================
+                            
+                            # 1. Status responses (ACK/PONG) → response_queue
+                            if 'status' in data:
+                                if data['status'] == 'ok':
+                                    # Push vào queue cho send_command() đang chờ
+                                    try:
+                                        self.response_queue.put_nowait(data)
+                                    except:
+                                        # Queue full, drop oldest
+                                        try:
+                                            self.response_queue.get_nowait()
+                                            self.response_queue.put_nowait(data)
+                                        except:
+                                            pass
+                                
+                                elif data['status'] == 'ready':
+                                    logger.info(f"Arduino ready (camera-only mode): {data}")
+                                
+                                elif data['status'] == 'error':
+                                    logger.error(f"Arduino error: {data.get('message', 'Unknown')}")
+                            
+                            # 2. Sensor data → sensor_callback
+                            elif 'distance' in data:
                                 self.sensor_data = data
                                 
                                 # Call callback if set
                                 if self.sensor_callback:
                                     self.sensor_callback(data)
-                            
-                            # Log other messages
-                            elif 'status' in data:
-                                if data['status'] == 'ready':
-                                    logger.info(f"Arduino ready (camera-only mode): {data}")
-                                elif data['status'] == 'error':
-                                    logger.error(f"Arduino error: {data.get('message', 'Unknown')}")
                         
                         except json.JSONDecodeError:
                             logger.debug(f"Non-JSON line: {line}")

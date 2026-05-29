@@ -278,7 +278,7 @@ class AutoModeController:
         self.recovery_mode = False
         self.recovery_direction = 'left'
         self.recovery_scan_speed = 140
-        self.recovery_scan_time = 0.0
+        self.recovery_start_time = 0.0  # ✅ FIX: Wall clock time thay vì counter
         self.recovery_max_scan_time = 0.5  # Giây để quét mỗi bên
         self.recovery_attempts = 0
         self.recovery_max_attempts = 2
@@ -478,7 +478,7 @@ class AutoModeController:
                                 logger.info(f"🔍 SMART RECOVERY: Last error={self.last_valid_error:.0f}px (RIGHT) → Scan RIGHT first")
                             
                             self.recovery_mode = True
-                            self.recovery_scan_time = 0.0
+                            self.recovery_start_time = time.time()  # ✅ FIX: Dùng wall clock
                             self.recovery_attempts = 0
                         
                         lane_found = self._perform_lane_recovery(frame)
@@ -558,7 +558,11 @@ class AutoModeController:
         logger.info("Auto loop ended")
     
     def _perform_lane_recovery(self, frame) -> bool:
-        """Perform lane recovery by scanning left-right"""
+        """
+        Perform lane recovery by scanning left-right
+        
+        ✅ FIX: Dùng wall clock time thay vì fake counter
+        """
         error, x_line, center_x, recovery_debug_frame = detect_line(frame, self.detection_config)
         
         # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery (với lock)
@@ -570,9 +574,10 @@ class AutoModeController:
         if abs(error) <= self.MAX_ERROR_THRESHOLD:
             return True
         
-        self.recovery_scan_time += 0.05
+        # ✅ FIX: Tính elapsed time từ wall clock
+        elapsed_time = time.time() - self.recovery_start_time
         
-        if self.recovery_scan_time >= self.recovery_max_scan_time:
+        if elapsed_time >= self.recovery_max_scan_time:
             if self.recovery_direction == 'left':
                 logger.info("🔄 Switching recovery scan direction: LEFT → RIGHT")
                 self.recovery_direction = 'right'
@@ -581,17 +586,18 @@ class AutoModeController:
                 self.recovery_direction = 'left'
                 self.recovery_attempts += 1
             
-            self.recovery_scan_time = 0.0
+            # Reset timer cho direction mới
+            self.recovery_start_time = time.time()
             
             if self.recovery_attempts >= self.recovery_max_attempts:
                 return False
         
         if self.recovery_direction == 'left':
             self.robot.driver.turn_left(self.recovery_scan_speed)
-            self.robot.current_state = f'SCANNING LEFT... ({self.recovery_scan_time:.1f}s)'
+            self.robot.current_state = f'SCANNING LEFT... ({elapsed_time:.1f}s)'
         else:
             self.robot.driver.turn_right(self.recovery_scan_speed)
-            self.robot.current_state = f'SCANNING RIGHT... ({self.recovery_scan_time:.1f}s)'
+            self.robot.current_state = f'SCANNING RIGHT... ({elapsed_time:.1f}s)'
         
         return False
     
@@ -877,50 +883,62 @@ class FollowModeController:
                     self.robot.current_state = status
                     
                     # ===== DRAW ENHANCED DEBUG INFO =====
-                    # ✅ FIX: Vẽ lên debug frame với lock
+                    # ✅ FIX: Copy frame RA NGOÀI lock, vẽ NGOÀI lock, swap TRONG lock
+                    # Lock chỉ để copy/swap pointer (< 1ms), KHÔNG hold trong quá trình vẽ
                     with self.debug_frame_lock:
                         if self.latest_debug_frame is not None:
-                            h, w = self.latest_debug_frame.shape[:2]
-                            
-                            # Draw target size zone (green circle)
-                            cv2.circle(self.latest_debug_frame, 
-                                      (int(center_x), int(frame_h / 2)), 
-                                      self.TARGET_SIZE, (0, 255, 0), 2)
-                            cv2.putText(self.latest_debug_frame, 
-                                       f"Target: {self.TARGET_SIZE}px", 
-                                       (int(center_x) - self.TARGET_SIZE + 10, 
-                                        int(frame_h / 2) - self.TARGET_SIZE - 10),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                            
-                            # Draw center line
-                            cv2.line(self.latest_debug_frame, 
-                                    (int(center_x), 0), 
-                                    (int(center_x), h), 
-                                    (0, 255, 255), 1)
-                            
-                            # Draw object to center arrow
-                            cv2.arrowedLine(self.latest_debug_frame,
-                                           (int(center_x), h - 50),
-                                           (self.target_x, h - 50),
-                                           (255, 0, 255), 3, tipLength=0.3)
-                            
-                            # Draw info panel
-                            info_y = 30
-                            info_lines = [
-                                f"Mode: FOLLOW",
-                                f"Target: {self.target_color_name.upper()}",
-                                f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
-                                f"H-Error: {error_horizontal:.0f}px",
-                                f"D-Error: {error_distance:.0f}px",
-                                f"L-Speed: {left_speed:+4d}",
-                                f"R-Speed: {right_speed:+4d}"
-                            ]
-                            
-                            for line in info_lines:
-                                cv2.putText(self.latest_debug_frame, line,
-                                           (10, info_y),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                                info_y += 20
+                            # Copy frame RA NGOÀI để vẽ (lock time < 1ms)
+                            frame_to_draw = self.latest_debug_frame.copy()
+                        else:
+                            frame_to_draw = None
+                    
+                    # Vẽ NGOÀI lock (2-5ms, không block Flask)
+                    if frame_to_draw is not None:
+                        h, w = frame_to_draw.shape[:2]
+                        
+                        # Draw target size zone (green circle)
+                        cv2.circle(frame_to_draw, 
+                                  (int(center_x), int(frame_h / 2)), 
+                                  self.TARGET_SIZE, (0, 255, 0), 2)
+                        cv2.putText(frame_to_draw, 
+                                   f"Target: {self.TARGET_SIZE}px", 
+                                   (int(center_x) - self.TARGET_SIZE + 10, 
+                                    int(frame_h / 2) - self.TARGET_SIZE - 10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        
+                        # Draw center line
+                        cv2.line(frame_to_draw, 
+                                (int(center_x), 0), 
+                                (int(center_x), h), 
+                                (0, 255, 255), 1)
+                        
+                        # Draw object to center arrow
+                        cv2.arrowedLine(frame_to_draw,
+                                       (int(center_x), h - 50),
+                                       (self.target_x, h - 50),
+                                       (255, 0, 255), 3, tipLength=0.3)
+                        
+                        # Draw info panel
+                        info_y = 30
+                        info_lines = [
+                            f"Mode: FOLLOW",
+                            f"Target: {self.target_color_name.upper()}",
+                            f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
+                            f"H-Error: {error_horizontal:.0f}px",
+                            f"D-Error: {error_distance:.0f}px",
+                            f"L-Speed: {left_speed:+4d}",
+                            f"R-Speed: {right_speed:+4d}"
+                        ]
+                        
+                        for line in info_lines:
+                            cv2.putText(frame_to_draw, line,
+                                       (10, info_y),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                            info_y += 20
+                        
+                        # Swap frame TRONG lock (atomic, < 1μs)
+                        with self.debug_frame_lock:
+                            self.latest_debug_frame = frame_to_draw
                 
                 else:
                     # No target found - STOP and SEARCH
@@ -930,14 +948,24 @@ class FollowModeController:
                     self.target_w = 0
                     self.target_h = 0
                     
-                    # ✅ FIX: Draw search message với lock
+                    # ✅ FIX: Copy-Draw-Swap pattern (lock chỉ để copy/swap)
                     with self.debug_frame_lock:
                         if self.latest_debug_frame is not None:
-                            h, w = self.latest_debug_frame.shape[:2]
-                            cv2.putText(self.latest_debug_frame,
-                                       f"SEARCHING {self.target_color_name.upper()}...",
-                                       (10, 30),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                            frame_to_draw = self.latest_debug_frame.copy()
+                        else:
+                            frame_to_draw = None
+                    
+                    # Vẽ NGOÀI lock
+                    if frame_to_draw is not None:
+                        h, w = frame_to_draw.shape[:2]
+                        cv2.putText(frame_to_draw,
+                                   f"SEARCHING {self.target_color_name.upper()}...",
+                                   (10, 30),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        
+                        # Swap TRONG lock
+                        with self.debug_frame_lock:
+                            self.latest_debug_frame = frame_to_draw
                 
                 time.sleep(0.05)
                 

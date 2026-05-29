@@ -15,41 +15,39 @@ logger = logging.getLogger(__name__)
 def detect_line(frame, config=None):
     """
     Phát hiện vạch KẺ ĐEN trên nền TRẮNG (bìa trắng)
-    OPTIMIZED: Nhận YUV420 từ ISP, trích xuất Y channel (Grayscale) miễn phí
+    ✅ FIXED: Nhận BGR từ camera_manager (đã convert từ YUV420)
     
     Thông số thực tế:
     - Lane width: 38cm
     - Robot width: 15cm
-    - Input: YUV420 640x480 từ Picamera2 ISP (KHÔNG CẦN RESIZE!)
+    - Input: BGR 640x480 từ camera_manager (converted từ YUV420)
     - Line color: BLACK on WHITE background
     """
     
     # ============================================================
-    # BƯỚC 0: XỬ LÝ FORMAT - TÁCH Y CHANNEL (GRAYSCALE)
+    # BƯỚC 0: XỬ LÝ FORMAT - CONVERT TO GRAYSCALE
     # ============================================================
-    # YUV420 format: Y plane (Grayscale) ở đầu, kích thước = width * height
-    # U và V planes ở sau, mỗi cái = width * height / 4
+    # ✅ CRITICAL BUG FIX: Frame giờ luôn là BGR (3-channel) từ camera_manager
+    # Không còn nhận raw YUV420 nữa → Logic đơn giản hơn, ít lỗi hơn
     
     height, width = frame.shape[:2]
     
-    # Kiểm tra format: Nếu là YUV420, trích xuất Y channel
-    if len(frame.shape) == 2:
-        # Đã là grayscale (Y channel only)
+    # Convert BGR → Grayscale (standard OpenCV)
+    if len(frame.shape) == 3 and frame.shape[2] == 3:
+        # BGR format (standard)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    elif len(frame.shape) == 2:
+        # Already grayscale (fallback for test images)
         gray = frame
-    elif frame.shape[0] == int(height * 1.5):
-        # YUV420: Y plane chiếm 2/3 đầu
-        gray = frame[:height, :].copy()
     else:
-        # Fallback: BGR/RGB format (từ config cũ hoặc test)
-        if frame.shape[2] == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        # Unknown format - log error
+        logger.error(f"Unexpected frame format: shape={frame.shape}")
+        # Return safe defaults
+        return 999, width // 2, width // 2, frame
     
     # Đảm bảo kích thước đúng 640x480
     if gray.shape != (480, 640):
         gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
-        # ✅ FIX: Dùng logger thay vì print() để tránh blocking I/O trong production loop
         logger.warning(f"Frame không phải 640x480, đã resize: {gray.shape}")
     
     height, width = 480, 640  # Cố định
@@ -276,24 +274,21 @@ def detect_line_black_adaptive(frame):
     """
     Phương pháp dự phòng: ADAPTIVE THRESHOLD
     Tốt hơn khi ánh sáng không đều hoặc Hough thất bại
-    OPTIMIZED: Nhận YUV420, trích xuất Y channel
+    ✅ FIXED: Nhận BGR từ camera_manager (đã convert từ YUV420)
     """
     # ============================================================
-    # XỬ LÝ FORMAT - TÁCH Y CHANNEL
+    # XỬ LÝ FORMAT - CONVERT TO GRAYSCALE
     # ============================================================
     height, width = frame.shape[:2]
     
-    if len(frame.shape) == 2:
+    # Convert BGR → Grayscale (standard OpenCV)
+    if len(frame.shape) == 3 and frame.shape[2] == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    elif len(frame.shape) == 2:
         gray = frame
-    elif frame.shape[0] == int(height * 1.5):
-        # YUV420: Lấy Y plane
-        gray = frame[:height, :].copy()
     else:
-        # Fallback: BGR format
-        if frame.shape[2] == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        logger.error(f"Unexpected frame format in adaptive: shape={frame.shape}")
+        return 999, width // 2, width // 2, frame
     
     # Đảm bảo 640x480
     if gray.shape != (480, 640):
@@ -392,25 +387,22 @@ def detect_line_black_adaptive(frame):
 def calibrate_lane_width(frame, show_result=False):
     """
     Calibration tool - Đo 38cm lane thành pixels
-    OPTIMIZED: Nhận YUV420, trích xuất Y channel
+    ✅ FIXED: Nhận BGR từ camera_manager (đã convert từ YUV420)
     Đã sửa: KHÔNG dùng cv2.imshow() (không có màn hình)
     """
     # ============================================================
-    # XỬ LÝ FORMAT - TÁCH Y CHANNEL
+    # XỬ LÝ FORMAT - CONVERT TO GRAYSCALE
     # ============================================================
     height, width = frame.shape[:2]
     
-    if len(frame.shape) == 2:
+    # Convert BGR → Grayscale (standard OpenCV)
+    if len(frame.shape) == 3 and frame.shape[2] == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    elif len(frame.shape) == 2:
         gray = frame
-    elif frame.shape[0] == int(height * 1.5):
-        # YUV420: Lấy Y plane
-        gray = frame[:height, :].copy()
     else:
-        # Fallback: BGR format
-        if frame.shape[2] == 3:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = frame
+        logger.error(f"Unexpected frame format in calibrate: shape={frame.shape}")
+        return None
     
     # Đảm bảo 640x480
     if gray.shape != (480, 640):
