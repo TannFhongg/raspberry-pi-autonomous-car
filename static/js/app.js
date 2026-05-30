@@ -98,15 +98,7 @@ function updateSensorData(data) {
             (data.line_position > 0 ? '+' : '') + data.line_position;
     }
 
-    // Update Ultrasonic Distance
-    if (data.distance !== undefined) {
-        const distValue = document.getElementById('ultrasonicValue');
-        const distBar = document.getElementById('distanceBar');
-        distValue.textContent = data.distance.toFixed(1);
 
-        const percentage = Math.min(100, data.distance);
-        distBar.style.width = percentage + '%';
-    }
 }
 
 // ===== TARGET DATA UPDATE (FIXED) =====
