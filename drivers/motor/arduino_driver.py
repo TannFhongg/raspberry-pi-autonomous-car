@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ArduinoDriver:
     """
     Arduino UART Communication Driver
-    Camera-only version - handles motors and ultrasonic sensor only
+    Camera-only version - handles motors only
     """
     
     def __init__(self, port: str = '/dev/ttyACM0', baudrate: int = 115200):
@@ -38,9 +38,8 @@ class ArduinoDriver:
         self.left_speed = 0
         self.right_speed = 0
         
-        # Sensor data (simplified - no line sensors)
+        # Sensor data (simplified - no sensors)
         self.sensor_data = {
-            'distance': 0.0,
             'left_speed': 0,
             'right_speed': 0,
             'uptime': 0,
@@ -233,10 +232,6 @@ class ArduinoDriver:
         """Get latest sensor data"""
         return self.sensor_data.copy()
     
-    def get_distance(self) -> float:
-        """Get ultrasonic distance reading"""
-        return self.sensor_data.get('distance', 0.0)
-    
     def set_sensor_callback(self, callback: Callable):
         """
         Set callback function for sensor data updates
@@ -287,9 +282,9 @@ class ArduinoDriver:
                                 elif data['status'] == 'error':
                                     logger.error(f"Arduino error: {data.get('message', 'Unknown')}")
                             
-                            # 2. Sensor data → sensor_callback
-                            elif 'distance' in data:
-                                self.sensor_data = data
+                            # 2. Motor status data → sensor_callback
+                            elif 'left_speed' in data or 'right_speed' in data:
+                                self.sensor_data.update(data)
                                 
                                 # Call callback if set
                                 if self.sensor_callback:

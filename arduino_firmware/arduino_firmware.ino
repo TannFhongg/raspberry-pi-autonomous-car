@@ -3,10 +3,10 @@
  * 
  * Handles:
  * - L298N Motor Control (PWM + Direction)
- * - HC-SR04 Ultrasonic Sensor (Obstacle Detection)
  * - UART Communication with Raspberry Pi
  * 
  * NO IR LINE SENSORS - Camera does all lane detection
+ * NO ULTRASONIC SENSOR - Obstacle detection removed
  * 
  * Communication: JSON protocol over Serial (115200 baud)
  */
@@ -25,17 +25,11 @@
 #define IN4 5   // Right Motor Direction 2
 
 // ===== SENSOR PIN DEFINITIONS =====
-// HC-SR04 Ultrasonic Sensor (Obstacle Detection Only)
-#define ULTRASONIC_TRIG  12
-#define ULTRASONIC_ECHO  11
+// No sensors - Camera handles all perception
 
 // ===== GLOBAL VARIABLES =====
 int leftSpeed = 0;
 int rightSpeed = 0;
-float distance = 0.0;
-
-unsigned long lastSensorRead = 0;
-unsigned long sensorReadInterval = 100; // Read sensors every 100ms (slower, only ultrasonic)
 
 // ===== SAFETY WATCHDOG =====
 // ✅ CRITICAL SAFETY: Auto-stop motors if no heartbeat from Raspberry Pi
@@ -57,10 +51,6 @@ void setup() {
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
-  
-  // Ultrasonic sensor pins
-  pinMode(ULTRASONIC_TRIG, OUTPUT);
-  pinMode(ULTRASONIC_ECHO, INPUT);
   
   // Stop motors on startup
   stopMotors();
@@ -86,13 +76,6 @@ void loop() {
     }
     // Keep checking but don't spam errors
     lastHeartbeat = millis() - HEARTBEAT_TIMEOUT + 500; // Check again in 500ms
-  }
-  
-  // Read sensors periodically
-  if (millis() - lastSensorRead >= sensorReadInterval) {
-    readSensors();
-    sendSensorData();
-    lastSensorRead = millis();
   }
   
   // Process incoming commands
@@ -141,7 +124,7 @@ void processCommand() {
     sendAck("SET_SPEED");
   }
   else if (strcmp(cmd, "GET_SENSORS") == 0) {
-    sendSensorData();
+    sendAck("GET_SENSORS");
   }
   else if (strcmp(cmd, "PING") == 0) {
     // PING is specifically for heartbeat/keepalive
@@ -213,42 +196,7 @@ void stopMotors() {
   analogWrite(ENB, 0);
 }
 
-// ===== SENSOR READING =====
-void readSensors() {
-  // Only read ultrasonic distance (obstacle detection)
-  distance = readUltrasonic();
-}
-
-float readUltrasonic() {
-  digitalWrite(ULTRASONIC_TRIG, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG, LOW);
-  
-  long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 30000); // Timeout 30ms
-  if (duration == 0) {
-    return 999.0; // Max distance or no echo
-  }
-  
-  float dist = duration * 0.034 / 2.0; // Convert to cm
-  return constrain(dist, 2.0, 400.0);
-}
-
 // ===== COMMUNICATION =====
-void sendSensorData() {
-  StaticJsonDocument<200> doc;
-  
-  // Only distance sensor (no line sensors)
-  doc["distance"] = round(distance * 10) / 10.0; // Round to 1 decimal
-  doc["left_speed"] = leftSpeed;
-  doc["right_speed"] = rightSpeed;
-  doc["uptime"] = millis();
-  doc["mode"] = "camera_only";
-  
-  serializeJson(doc, Serial);
-  Serial.println();
-}
 
 void sendAck(const char* command) {
   StaticJsonDocument<100> doc;
