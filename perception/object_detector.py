@@ -7,7 +7,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class ObjectDetector:
-    def __init__(self, model_path='data/models/best_ncnn_model', conf_threshold=0.5):
+    def __init__(self, model_path='models/best_ncnn_model', conf_threshold=0.5):
         self.model = None
         self.conf_threshold = conf_threshold
         

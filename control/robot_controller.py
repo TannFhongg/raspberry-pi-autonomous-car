@@ -278,7 +278,7 @@ class AutoModeController:
         self.camera: Optional[CameraManager] = None
         
         self.detector = ObjectDetector(
-            model_path='data/models/best_ncnn_model', 
+            model_path='models/best_ncnn_model', 
             conf_threshold=0.5
         )
         
@@ -710,7 +710,7 @@ class FollowModeController:
         
         # YOLO detector
         self.detector = ObjectDetector(
-            model_path='data/models/best_ncnn_model', 
+            model_path='models/best_ncnn_model', 
             conf_threshold=0.5
         )
         
