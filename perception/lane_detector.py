@@ -81,9 +81,7 @@ def detect_line(frame, config=None):
     # ============================================================
     # LANE WIDTH PIXELS - ĐÃ CALIBRATE CHO 640x480
     # ============================================================
-    LANE_WIDTH_PIXELS = 457  # ✅ CALIBRATED: 25cm real = 457px (Calibration date: 2024-06-06)
-                             # Scale factor: 0.0547 cm/px
-                             # Camera: Pi Camera v2, Resolution: 640x480
+    LANE_WIDTH_PIXELS = 457  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
     
     # Debug frame - Chuyển sang BGR để vẽ màu
     frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
@@ -314,7 +312,7 @@ def detect_line_black_adaptive(frame):
     
     height, width = 480, 640
     center_x = width // 2
-    LANE_WIDTH_PIXELS = 389  # Cùng giá trị với detect_line()
+    LANE_WIDTH_PIXELS = 457  # Cùng giá trị với detect_line()
     
     frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     
