@@ -56,7 +56,7 @@ def main():
     
     try:
         detector = ObjectDetector(
-            model_path='data/models/best_ncnn_model',
+            model_path='models/best_ncnn_model',
             conf_threshold=0.5
         )
         print("✅ Object Detector initialized")
