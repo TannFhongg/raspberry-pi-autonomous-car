@@ -72,7 +72,7 @@
                                 <span class="status-dot" id="stateDot"></span>
                                 State
                             </div>
-                            <div class="status-value" id="stateValue">IDLE</div>
+                            <div class="status-value" id="stateValue">STANDBY</div>
                         </div>
 
                         <div class="status-item">
@@ -137,6 +137,16 @@
                 </div>
                 <div class="panel-body control-body">
                     <div class="control-right" style="width: 100%;">
+                        <!-- Start/Standby Controls -->
+                        <div class="start-controls" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                            <button class="btn btn-success" style="flex: 1; padding: 14px;" onclick="startSystem()">
+                                START RUNNING
+                            </button>
+                            <button class="btn btn-warning" style="flex: 1; padding: 14px;" onclick="stopSystem()">
+                                STANDBY
+                            </button>
+                        </div>
+
                         <!-- Mode Selection -->
                         <div class="control-item">
                             <label><i class="fas fa-cog"></i> Mode:</label>

@@ -12,6 +12,18 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def yuv420_to_bgr(frame_yuv: np.ndarray) -> np.ndarray:
+    """
+    Convert Picamera2 YUV420 planar frames to BGR.
+
+    Picamera2 returns I420 layout (Y, U, V). OpenCV's generic
+    COLOR_YUV420p2BGR is an alias for YV12, so it swaps U/V and shifts colors.
+    """
+    import cv2
+
+    return cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
+
+
 class CameraManager:
     """
     Manages Picamera2 camera with thread-safe access
@@ -153,8 +165,6 @@ class CameraManager:
             return None
 
         try:
-            import cv2
-            
             # ✅ CRITICAL FIX: Capture KHÔNG dùng lock chính
             # → Auto loop không bị block bởi web stream
             frame_yuv = self.camera.capture_array()
@@ -248,7 +258,7 @@ class CameraManager:
             # ✅ OPTIMIZED: Convert YUV420→BGR chỉ cho web stream
             # ============================================================
             if self.format == 'YUV420':
-                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+                frame_bgr = yuv420_to_bgr(frame_yuv)
             else:
                 frame_bgr = frame_yuv
 

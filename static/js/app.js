@@ -2,7 +2,8 @@
 const socket = io();
 
 // State variables
-let currentMode = 'auto'; // 'auto', 'follow' only
+let currentMode = 'idle'; // 'idle', 'auto', 'follow'
+let selectedMode = 'auto'; // Mode selected for the next START RUNNING command
 let startTime = Date.now();
 let selectedColor = 'red';
 let followDistance = 50;
@@ -29,6 +30,9 @@ socket.on('mode_update', function (data) {
     console.log('Mode update received:', data);
     if (data.mode) {
         currentMode = data.mode;
+        if (data.mode === 'auto' || data.mode === 'follow') {
+            selectedMode = data.mode;
+        }
         updateModeRadioButtons();
         updateControlsState();
         updateFollowStatusVisibility(); // ✅ NEW: Hide/show follow status
@@ -158,8 +162,7 @@ function updateTargetData(data) {
         document.getElementById('targetX').textContent = data.target_x;
         document.getElementById('targetY').textContent = data.target_y;
 
-        // Update target box overlay
-        updateTargetOverlay(data.target_x, data.target_y, data.target_w, data.target_h, data.tracking);
+        updateTargetOverlay(data.target_x, data.target_y, data.target_w, data.target_h, false);
     }
 
     // Update target color info
@@ -191,21 +194,7 @@ function updateFollowStatusVisibility() {
 // ===== UPDATE TARGET OVERLAY =====
 function updateTargetOverlay(x, y, w, h, tracking) {
     const overlay = document.getElementById('targetOverlay');
-    const targetBox = document.getElementById('targetBox');
-
-    if (tracking && x !== undefined && y !== undefined) {
-        overlay.style.display = 'block';
-
-        // Convert normalized coordinates to pixels (assuming video frame size)
-        // Adjust these values based on your actual video dimensions
-        const videoWidth = 320;
-        const videoHeight = 240;
-
-        targetBox.style.left = (x * videoWidth) + 'px';
-        targetBox.style.top = (y * videoHeight) + 'px';
-        targetBox.style.width = (w * videoWidth) + 'px';
-        targetBox.style.height = (h * videoHeight) + 'px';
-    } else {
+    if (overlay) {
         overlay.style.display = 'none';
     }
 }
@@ -214,6 +203,7 @@ function updateTargetOverlay(x, y, w, h, tracking) {
 function getStateColor(state) {
     const colors = {
         'IDLE': '#9e9e9e',
+        'STANDBY': '#9e9e9e',
         'FOLLOWING LINE': '#4caf50',
         'FOLLOWING LANE': '#4caf50',
         'FOLLOWING TARGET': '#2196f3',
@@ -252,6 +242,70 @@ function updateLineSensors(sensors) {
 
 
 
+// ===== START / STANDBY CONTROLS =====
+function getSelectedRunMode() {
+    const checkedMode = document.querySelector('input[name="mode"]:checked');
+
+    if (checkedMode) {
+        return checkedMode.value;
+    }
+
+    const modeAuto = document.getElementById('modeAuto');
+    if (modeAuto) {
+        modeAuto.checked = true;
+    }
+    return 'auto';
+}
+
+function startSystem() {
+    const activeMode = getSelectedRunMode();
+
+    fetch(`/set_mode?mode=${activeMode}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to start system');
+            }
+
+            console.log('System started:', data);
+            currentMode = data.mode || activeMode;
+            selectedMode = activeMode;
+            updateModeRadioButtons();
+            updateControlsState();
+            updateFollowStatusVisibility();
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
+                'System started in ' + activeMode.toUpperCase() + ' mode');
+        })
+        .catch(error => {
+            console.error('Error starting system:', error);
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
+                'Failed to start system');
+        });
+}
+
+function stopSystem() {
+    fetch('/stop')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to enter standby');
+            }
+
+            console.log('System standby:', data);
+            currentMode = data.mode || 'idle';
+            updateModeRadioButtons();
+            updateControlsState();
+            updateFollowStatusVisibility();
+            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
+                'System moved to STANDBY');
+        })
+        .catch(error => {
+            console.error('Error entering standby:', error);
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
+                'Failed to enter standby');
+        });
+}
+
 // ===== EMERGENCY STOP =====
 function emergencyStop() {
     if (confirm('Execute EMERGENCY STOP?')) {
@@ -270,30 +324,13 @@ function emergencyStop() {
 
 // ===== MODE TOGGLE (Auto and Follow only) =====
 function toggleMode() {
-    const modeAuto = document.getElementById('modeAuto');
-    const modeFollow = document.getElementById('modeFollow');
-
-    if (modeAuto.checked) {
-        currentMode = 'auto';
-    } else if (modeFollow.checked) {
-        currentMode = 'follow';
-    }
-
-    // Send request to server
-    fetch('/set_mode?mode=' + currentMode)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Mode changed to:', currentMode, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-                'Mode changed to: ' + currentMode.toUpperCase());
-            updateControlsState();
-            updateFollowStatusVisibility(); // ✅ Update visibility immediately
-        })
-        .catch(error => {
-            console.error('Error changing mode:', error);
-            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
-                'Failed to change mode');
-        });
+    selectedMode = getSelectedRunMode();
+    console.log('Run mode selected:', selectedMode);
+    addLogEntry(new Date().toLocaleTimeString(), 'INFO',
+        'Mode selected: ' + selectedMode.toUpperCase());
+    updateModeRadioButtons();
+    updateControlsState();
+    updateFollowStatusVisibility(); // ✅ Update visibility immediately
 }
 
 // ===== UPDATE MODE RADIO BUTTONS =====
@@ -301,8 +338,8 @@ function updateModeRadioButtons() {
     const modeAuto = document.getElementById('modeAuto');
     const modeFollow = document.getElementById('modeFollow');
 
-    modeAuto.checked = (currentMode === 'auto');
-    modeFollow.checked = (currentMode === 'follow');
+    modeAuto.checked = (selectedMode === 'auto');
+    modeFollow.checked = (selectedMode === 'follow');
 }
 
 // ===== UPDATE CONTROLS STATE (Manual controls removed) =====
@@ -310,7 +347,7 @@ function updateControlsState() {
     const followSettings = document.getElementById('followSettings');
 
     // Show/hide follow settings
-    if (currentMode === 'follow') {
+    if (selectedMode === 'follow') {
         followSettings.style.display = 'flex';
     } else {
         followSettings.style.display = 'none';
@@ -466,7 +503,7 @@ window.addEventListener('load', function () {
 
     // Initial log entry
     addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-        'Autonomous Car Control Panel initialized - Auto Mode active');
+        'Autonomous Car Control Panel initialized - STANDBY');
 });
 
 // THÊM ĐOẠN NÀY: Nhận dữ liệu Real-time từ Arduino

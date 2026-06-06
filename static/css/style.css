@@ -218,6 +218,7 @@ body {
 }
 
 .ai-overlay {
+    display: none;
     position: absolute;
     top: 10px;
     left: 10px;
@@ -234,6 +235,7 @@ body {
 
 /* ===== TARGET OVERLAY (NEW) ===== */
 .target-overlay {
+    display: none !important;
     position: absolute;
     top: 0;
     left: 0;
