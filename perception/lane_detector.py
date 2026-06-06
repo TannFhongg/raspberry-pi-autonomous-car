@@ -3,6 +3,11 @@ Lane Detection Module - FIXED for 1640x1232 → 640x480 resize
 OPTIMIZED for BLACK LINES on WHITE BACKGROUND
 Designed for: 38cm lane width, 15cm robot width, black tape lines
 Camera: Raspberry Pi Camera Module 2
+
+CHANGELOG:
+- FIX: Thêm tham số debug=False vào detect_line() và detect_line_black_adaptive()
+  Robot controller gọi detect_line(..., debug=False) nhưng signature cũ không có param này
+  → TypeError crash → auto loop thoát ngay lập tức → không có debug frame nào được lưu
 """
 
 import cv2
@@ -12,10 +17,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def detect_line(frame, config=None):
+def detect_line(frame, config=None, debug=False):
     """
     Phát hiện vạch KẺ ĐEN trên nền TRẮNG (bìa trắng)
     ✅ OPTIMIZED: Nhận RAW YUV420 từ camera_manager, lấy trực tiếp kênh Y (grayscale)
+    ✅ FIX: Thêm tham số debug=False để tương thích với robot_controller.py
+    
+    Args:
+        frame:  RAW YUV420 array (720, 640) từ camera_manager, hoặc BGR (480, 640, 3)
+        config: Cấu hình lane detection từ hardware_config.yaml
+        debug:  (Deprecated) Không dùng nữa, giữ để backward compatible
+    
+    Returns:
+        (error, x_line, center_x, None)
     
     Thông số thực tế:
     - Lane width: 38cm
@@ -68,14 +82,14 @@ def detect_line(frame, config=None):
     # ============================================================
     if config is None:
         config = {
-            'roi_top_ratio': 0.6,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
+            'roi_top_ratio': 0.6,
             'roi_bottom_ratio': 1.0,
-            'canny_low': 80,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
-            'canny_high': 185,           # TĂNG lên 120
-            'hough_threshold': 45,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
-            'min_line_length': 60,       # TĂNG lên 30 (loại nhiễu)
-            'max_line_gap': 30,          # TĂNG lên 20
-            'blur_kernel': 7,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
+            'canny_low': 80,
+            'canny_high': 185,
+            'hough_threshold': 45,
+            'min_line_length': 60,
+            'max_line_gap': 30,
+            'blur_kernel': 7,
         }
 
     # ============================================================
@@ -93,8 +107,8 @@ def detect_line(frame, config=None):
     # Làm mờ nhẹ (nền trắng ít nhiễu hơn nền nhà)
     blur = cv2.GaussianBlur(gray_inverted, (config['blur_kernel'], config['blur_kernel']), 0)
     
-    # TĂNG CƯỜNG TƯƠNG PHẢN (Optional - có thể bỏ nếu nền trắng đồng đều)
-    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))  # Giảm clipLimit xuống 1.5
+    # TĂNG CƯỜNG TƯƠNG PHẢN
+    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
     enhanced = clahe.apply(blur)
     
     # Canny edge detection
@@ -106,11 +120,10 @@ def detect_line(frame, config=None):
     roi_top = int(height * config['roi_top_ratio'])
     roi_bottom = int(height * config['roi_bottom_ratio'])
     
-    # Mở rộng ROI (30%-70% thay vì 35%-65%) - Bắt vạch ở 2 bên tốt hơn
     roi_vertices = np.array([[
         (0, roi_bottom),
-        (int(width * 0.2), roi_top),  # MỞ RỘNG: 30% thay vì 35%
-        (int(width * 0.8), roi_top),  # MỞ RỘNG: 70% thay vì 65%
+        (int(width * 0.2), roi_top),
+        (int(width * 0.8), roi_top),
         (width, roi_bottom)
     ]], dtype=np.int32)
     
@@ -131,7 +144,7 @@ def detect_line(frame, config=None):
     )
     
     # ============================================================
-    # 4. PHÂN LOẠI VẠCH TRÁI/PHẢI - LOGIC CẢI THIỆN
+    # 4. PHÂN LOẠI VẠCH TRÁI/PHẢI
     # ============================================================
     left_lines = []
     right_lines = []
@@ -140,23 +153,18 @@ def detect_line(frame, config=None):
         for line in lines:
             x1, y1, x2, y2 = line[0]
             
-            # Tính độ dốc
-            if abs(x2 - x1) < 1:  # Tránh chia cho 0
+            if abs(x2 - x1) < 1:
                 continue
             
             slope = (y2 - y1) / (x2 - x1)
             
-            # BỘ LỌC ĐỘ DỐC: Chặt chẽ hơn để loại nhiễu
-            if abs(slope) < 0.5:  # TĂNG từ 0.4 lên 0.5
+            if abs(slope) < 0.5:
                 continue
             
-            # Tính điểm giữa để phân loại
             mid_x = (x1 + x2) / 2
             
-            # Phân loại: Vạch TRÁI (slope âm, nằm bên trái tâm)
             if slope < -0.5 and mid_x < center_x:
                 left_lines.append((x1, y1, x2, y2, slope))
-            # Phân loại: Vạch PHẢI (slope dương, nằm bên phải tâm)
             elif slope > 0.5 and mid_x > center_x:
                 right_lines.append((x1, y1, x2, y2, slope))
     
@@ -172,19 +180,14 @@ def detect_line(frame, config=None):
             return None
         
         x_bottoms = []
-        slopes_valid = []
         
         for x1, y1, x2, y2, slope in lines:
-            # Ngoại suy đến đáy ảnh: x_bottom = x1 + (height - y1) / slope
             x_bottom = x1 + (height - y1) / slope
             
-            # Kiểm tra x_bottom có hợp lý không (trong khoảng 0 - width)
             if 0 <= x_bottom <= width:
                 x_bottoms.append(x_bottom)
-                slopes_valid.append(slope)
         
         if x_bottoms:
-            # Lấy MEDIAN thay vì MEAN (chống outlier tốt hơn)
             return int(np.median(x_bottoms))
         return None
     
@@ -198,121 +201,96 @@ def detect_line(frame, config=None):
     lane_status = "UNKNOWN"
     
     if left_lane_x is not None and right_lane_x is not None:
-        # CASE 1: Thấy cả 2 vạch - HOÀN HẢO
         x_line = (left_lane_x + right_lane_x) // 2
         lane_status = "BOTH_LANES"
         
     elif left_lane_x is not None:
-        # CASE 2: Chỉ thấy TRÁI
         x_line = left_lane_x + (LANE_WIDTH_PIXELS // 2)
         lane_status = "LEFT_ONLY"
         
     elif right_lane_x is not None:
-        # CASE 3: Chỉ thấy PHẢI
         x_line = right_lane_x - (LANE_WIDTH_PIXELS // 2)
         lane_status = "RIGHT_ONLY"
         
     else:
-        # CASE 4: Mất cả 2
         x_line = center_x
         lane_status = "NO_LANE"
-        forced_error = 999
 
     # ============================================================
-    # 7. TÍNH SAI SỐ (KHÔNG VẼ DEBUG)
+    # 7. TÍNH SAI SỐ
     # ============================================================
-    CAMERA_OFFSET = -15  # Hiệu chỉnh nếu camera không đặt chính giữa robot
+    CAMERA_OFFSET = -15
     if lane_status == "NO_LANE":
-        error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
+        error = 999
     else:
-        error = x_line - center_x + CAMERA_OFFSET  # Các trường hợp còn lại tính toán bình thường
+        error = x_line - center_x + CAMERA_OFFSET
     
     return error, x_line, center_x, None
 
 
-def detect_line_black_adaptive(frame):
+def detect_line_black_adaptive(frame, debug=False):
     """
     Phương pháp dự phòng: ADAPTIVE THRESHOLD
-    Tốt hơn khi ánh sáng không đều hoặc Hough thất bại
+    ✅ FIX: Thêm tham số debug=False để tương thích
     ✅ OPTIMIZED: Nhận RAW YUV420, lấy trực tiếp kênh Y
     """
-    # ============================================================
-    # XỬ LÝ FORMAT - LẤY KÊNH Y TỪ YUV420
-    # ============================================================
     height, width = frame.shape[:2]
     
-    # Detect format và extract grayscale
     if len(frame.shape) == 2:
-        # YUV420 planar format
         if height == 720 and width == 640:
             gray = frame[:480, :].copy()
         else:
             gray = frame
     elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        # BGR fallback
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         logger.warning("⚠️ Adaptive: Received BGR, converting (CPU overhead!)")
     else:
         logger.error(f"Unexpected frame format in adaptive: shape={frame.shape}")
         return 999, width // 2, width // 2, frame
     
-    # Đảm bảo 640x480
     if gray.shape != (480, 640):
         gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
     
     height, width = 480, 640
     center_x = width // 2
-    LANE_WIDTH_PIXELS = 457  # Cùng giá trị với detect_line()
+    LANE_WIDTH_PIXELS = 457
     
-    # Làm mờ
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
     
-    # ADAPTIVE THRESHOLD - Vạch đen thành trắng
     thresh = cv2.adaptiveThreshold(
         blur, 255, 
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv2.THRESH_BINARY_INV, 
-        blockSize=21,  # TĂNG lên 21 (phù hợp với nền trắng lớn)
-        C=8            # TĂNG lên 8
+        blockSize=21,
+        C=8
     )
     
-    # ROI - Chỉ xét 2/3 dưới ảnh
     roi_top = int(height * 0.35)
     thresh[:roi_top, :] = 0
     
-    # Tìm contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Lọc contours theo diện tích
-    valid_contours = [c for c in contours if cv2.contourArea(c) > 200]  # TĂNG lên 200
+    valid_contours = [c for c in contours if cv2.contourArea(c) > 200]
     
     if len(valid_contours) >= 2:
-        # Sắp xếp theo vị trí x
         valid_contours = sorted(valid_contours, key=lambda c: cv2.boundingRect(c)[0])
         
-        # Lấy 2 contours ngoài cùng
         left_contour = valid_contours[0]
         right_contour = valid_contours[-1]
         
-        # Tính tâm
         M_left = cv2.moments(left_contour)
         M_right = cv2.moments(right_contour)
         
         if M_left['m00'] > 0 and M_right['m00'] > 0:
             left_x = int(M_left['m10'] / M_left['m00'])
             right_x = int(M_right['m10'] / M_right['m00'])
-            
             x_line = (left_x + right_x) // 2
         else:
             x_line = center_x
             
     elif valid_contours:
-        # Chỉ thấy 1 vạch
         M = cv2.moments(valid_contours[0])
         if M['m00'] > 0:
             cx = int(M['m10'] / M['m00'])
-            
-            # Dự đoán: Nếu contour ở bên trái → thêm nửa lane width
             if cx < center_x:
                 x_line = cx + (LANE_WIDTH_PIXELS // 2)
             else:
@@ -331,29 +309,21 @@ def calibrate_lane_width(frame, show_result=False):
     """
     Calibration tool - Đo 38cm lane thành pixels
     ✅ OPTIMIZED: Nhận RAW YUV420, lấy trực tiếp kênh Y
-    Đã sửa: KHÔNG dùng cv2.imshow() (không có màn hình)
     """
-    # ============================================================
-    # XỬ LÝ FORMAT - LẤY KÊNH Y TỪ YUV420
-    # ============================================================
     height, width = frame.shape[:2]
     
-    # Detect format và extract grayscale
     if len(frame.shape) == 2:
-        # YUV420 planar format
         if height == 720 and width == 640:
             gray = frame[:480, :].copy()
         else:
             gray = frame
     elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        # BGR fallback
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         logger.warning("⚠️ Calibrate: Received BGR, converting (CPU overhead!)")
     else:
         logger.error(f"Unexpected frame format in calibrate: shape={frame.shape}")
         return None
     
-    # Đảm bảo 640x480
     if gray.shape != (480, 640):
         gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
     
@@ -362,14 +332,11 @@ def calibrate_lane_width(frame, show_result=False):
     gray_inv = cv2.bitwise_not(gray)
     edges = cv2.Canny(gray_inv, 40, 120)
     
-    # Chỉ xét 20% đáy ảnh
     edges[:int(height * 0.8), :] = 0
     
-    # Tìm đường thẳng
     lines = cv2.HoughLinesP(edges, 1, np.pi/180, 25, minLineLength=35, maxLineGap=20)
     
     if lines is not None:
-        # Tìm x min và max
         x_coords = []
         for line in lines:
             x1, y1, x2, y2 = line[0]
@@ -387,15 +354,11 @@ def calibrate_lane_width(frame, show_result=False):
             print(f"  Scale Factor:       {38 / lane_width_pixels:.4f} cm/px")
             print(f"{'='*60}\n")
             print(f"⚠️  CẬP NHẬT NGAY:")
-            print(f"  Sửa dòng 53 trong lane_detector.py:")
+            print(f"  Sửa LANE_WIDTH_PIXELS trong lane_detector.py:")
             print(f"  LANE_WIDTH_PIXELS = {lane_width_pixels}")
             print(f"{'='*60}\n")
             
             return lane_width_pixels
     
     print("❌ Không tìm thấy 2 vạch để calibrate!")
-    print("💡 Kiểm tra:")
-    print("  - Xe có đang ở giữa lane không?")
-    print("  - Vạch đen có rõ ràng trên nền trắng không?")
-    print("  - Ánh sáng có đủ không?")
     return None

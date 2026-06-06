@@ -1,8 +1,12 @@
 """
 Main Entry Point - LogisticsBot Control System
 Integrates Flask Web Dashboard with Robot Hardware Control
-Supports Arduino Nano for motor/sensor control
-UPDATED: Picamera2 support for video streaming
+
+CHANGELOG:
+- FIX BUG-4: debug_feed() không còn gọi camera.capture_frame() trực tiếp trong Flask thread
+  Thay bằng: đọc từ camera.capture_jpeg() → dùng buffer thread-safe của camera_manager
+  Lý do: capture_frame() không thread-safe khi gọi đồng thời từ auto_loop + Flask generator
+- FIX: Fallback sử dụng capture_jpeg() → convert đúng màu sắc (BGR) 
 """
 
 from flask import Flask, render_template, Response, jsonify, request
@@ -17,10 +21,8 @@ import os
 import time
 from pathlib import Path
 
-# Add project root to path
 sys.path.append(str(Path(__file__).parent))
 
-# Import custom modules
 from drivers.motor.arduino_driver import ArduinoDriver
 from control.robot_controller import (
     RobotController,
@@ -32,17 +34,14 @@ from utils.config_loader import load_config
 from perception.camera_manager import (
     get_web_camera,
     release_web_camera,
-)  # NEW: Picamera2
+)
 
-# Initialize Flask app
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "your-secret-key-here"
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Setup logging
 logger = setup_logger("main", "data/logs/robot.log")
 
-# Global variables
 robot_controller = None
 auto_controller = None
 follow_controller = None
@@ -50,7 +49,6 @@ motor_driver = None
 config = None
 LOG_FILE = "data/logs/robot.log"
 
-# Follow mode settings
 follow_settings = {
     "target_color": "red",
     "follow_distance": 50,
@@ -65,19 +63,15 @@ follow_settings = {
 
 
 def initialize_hardware():
-    """Initialize robot hardware"""
     global robot_controller, auto_controller, follow_controller, motor_driver, config
 
     try:
-        # Load configuration
         config = load_config("config/hardware_config.yaml")
         logger.info("Configuration loaded successfully")
 
-        # Determine control mode
         control_mode = config.get("control_mode", "arduino")
 
         if control_mode == "arduino":
-            # Use Arduino for motor control
             logger.info("Initializing Arduino driver...")
             arduino_config = config.get("arduino", {})
 
@@ -90,32 +84,21 @@ def initialize_hardware():
                 logger.error("Failed to connect to Arduino!")
                 return False
 
-            # Set sensor callback
             motor_driver.set_sensor_callback(on_arduino_sensor_data)
             logger.info("Arduino Motor Driver initialized")
 
         else:
-            # ===== BẮT ĐẦU SỬA ĐỔI =====
-            # Use Raspberry Pi GPIO directly (legacy mode)
-
-            # Import L298NDriver chỉ khi cần thiết (local import)
-            # Điều này tránh lỗi 'ModuleNotFoundError' nếu 'gpiozero' không được cài đặt
             from drivers.motor.l298n_driver import L298NDriver
-
             logger.info("Initializing L298N driver (direct GPIO mode)...")
             motor_driver = L298NDriver(config)
             logger.info("L298N Motor Driver initialized")
-            # ===== KẾT THÚC SỬA ĐỔI =====
 
-        # Initialize robot controller
         robot_controller = RobotController(motor_driver, config)
         logger.info("Robot Controller initialized")
 
-        # Initialize auto mode controller
         auto_controller = AutoModeController(robot_controller)
         logger.info("Auto Mode Controller initialized")
 
-        # Initialize follow controller
         follow_controller = FollowModeController(robot_controller)
         logger.info("Follow Mode Controller initialized")
 
@@ -124,52 +107,30 @@ def initialize_hardware():
     except Exception as e:
         logger.error(f"Failed to initialize hardware: {e}")
         import traceback
-
         traceback.print_exc()
         return False
 
 
 def on_arduino_sensor_data(sensor_data: dict):
-    """
-    Callback when Arduino sends sensor data
-
-    Args:
-        sensor_data: Dictionary with sensor readings
-    """
-    # Update global sensor data for web interface
-    # This is called automatically by Arduino driver
     logger.debug(f"Sensor update: {sensor_data}")
-
-    # Emit to all connected clients
     socketio.emit("arduino_sensors", sensor_data)
-
-
-# ===== FLASK ROUTES =====
 
 
 @app.route("/")
 def index():
-    """Render main dashboard"""
     return render_template("index.html")
 
 
 @app.route("/video_feed")
 def video_feed():
-    """
-    Video streaming route with Picamera2
-    UPDATED: Now uses CameraManager with Picamera2
-    """
+    """Video streaming route - dùng CameraManager's generate_frames()"""
     try:
-        # Get global camera instance
         camera = get_web_camera(config)
-
-        # Start camera if not running
         if not camera.is_running():
             if not camera.start():
                 logger.error("Failed to start camera for video feed")
                 return "Camera initialization failed", 500
 
-        # Return streaming response
         return Response(
             camera.generate_frames(),
             mimetype="multipart/x-mixed-replace; boundary=frame",
@@ -178,7 +139,6 @@ def video_feed():
     except Exception as e:
         logger.error(f"Video feed error: {e}")
         import traceback
-
         traceback.print_exc()
         return "Camera error", 500
 
@@ -186,59 +146,69 @@ def video_feed():
 @app.route("/debug_feed")
 def debug_feed():
     """
-    Debug video feed - shows BGR color frames (320x240) based on current mode
-    - Auto Mode: Camera BGR feed (no lane visualization for performance)
-    - Follow Mode: Object detection with bounding boxes
+    Debug video feed - ảnh màu BGR (320x240) theo chế độ hiện tại:
+    - Auto Mode: Camera BGR feed
+    - Follow Mode: Object detection với bounding boxes
+    
+    ✅ FIX BUG-4: KHÔNG gọi capture_frame() trực tiếp trong Flask thread
+    → Tránh race condition với auto_loop/follow_loop đang dùng camera
+    → Fallback dùng camera.capture_jpeg() (đọc từ thread-safe buffer)
     """
     def generate_debug_frames():
-        # Ensure camera is started
-        try:
-            camera = get_web_camera(config)
-            if not camera.is_running():
-                camera.start()
-        except Exception as e:
-            logger.error(f"Failed to init camera for debug feed: {e}")
-        
         while True:
             try:
                 frame = None
                 
-                # Get debug frame based on current mode
+                # Ưu tiên đọc từ debug buffer của controller (đã là BGR 320x240)
                 if robot_controller:
                     current_mode = robot_controller.current_mode
                     
                     if current_mode == 'auto' and auto_controller:
-                        # Auto mode: BGR frame from camera (resized 320x240)
+                        # ✅ get_debug_frame() trả về COPY (thread-safe)
                         frame = auto_controller.get_debug_frame()
                     
                     elif current_mode == 'follow' and follow_controller:
-                        # Follow mode: Object tracking debug (BGR with bounding boxes)
+                        # ✅ get_debug_frame() trả về COPY (thread-safe)
                         frame = follow_controller.get_debug_frame()
                 
-                # Fallback to raw camera if no debug frame available
+                # ✅ FIX BUG-4: Fallback KHÔNG gọi capture_frame() trực tiếp!
+                # Thay bằng: capture_jpeg() đọc từ latest_frame buffer (thread-safe)
+                # → Không tranh giành Picamera2 với auto_loop thread
                 if frame is None:
                     try:
                         camera = get_web_camera(config)
                         if camera.is_running():
-                            frame_yuv = camera.capture_frame()
-                            if frame_yuv is not None:
-                                # Convert YUV420 to BGR for web display
-                                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
-                                frame = cv2.resize(frame_bgr, (320, 240))
-                    except Exception:
-                        pass
+                            # capture_jpeg() đọc từ latest_frame buffer (đã copy, thread-safe)
+                            # Trả về JPEG bytes → decode lại thành numpy array BGR
+                            jpeg_bytes = camera.capture_jpeg(quality=80)
+                            if jpeg_bytes is not None:
+                                # Decode JPEG → numpy BGR array
+                                nparr = np.frombuffer(jpeg_bytes, np.uint8)
+                                frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                                if frame_bgr is not None:
+                                    frame = cv2.resize(frame_bgr, (320, 240))
+                    except Exception as e:
+                        logger.debug(f"Fallback frame error: {e}")
                 
-                # Create placeholder if still no frame
+                # Placeholder nếu không có frame nào
                 if frame is None:
                     frame = np.zeros((240, 320, 3), dtype=np.uint8)
-                    cv2.putText(frame, "Waiting for camera...", (50, 120),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+                    cv2.putText(
+                        frame, "Waiting for camera...", (40, 120),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1
+                    )
                 
-                # Encode to JPEG
-                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                # Encode → JPEG và stream
+                ret, buffer = cv2.imencode(
+                    '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70]
+                )
                 if ret:
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                    yield (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n'
+                        + buffer.tobytes()
+                        + b'\r\n'
+                    )
                 
                 time.sleep(0.05)  # ~20 FPS
                 
@@ -252,12 +222,8 @@ def debug_feed():
     )
 
 
-# ===== MODE CONTROL =====
-
-
 @app.route("/set_mode")
 def set_mode():
-    """Set control mode (auto/follow only - manual mode removed)"""
     mode = request.args.get("mode", "auto")
 
     if mode not in ["auto", "follow"]:
@@ -266,7 +232,6 @@ def set_mode():
     if robot_controller.set_mode(mode):
         log_message(f"Mode changed to: {mode.upper()}")
 
-        # Start/stop controllers based on mode
         if mode == "auto":
             if auto_controller:
                 auto_controller.start()
@@ -278,7 +243,6 @@ def set_mode():
             if auto_controller:
                 auto_controller.stop()
 
-        # Emit state update
         socketio.emit("mode_update", {"mode": mode})
         socketio.emit("sensor_update", get_sensor_data())
 
@@ -287,12 +251,8 @@ def set_mode():
         return jsonify({"status": "error", "message": "Failed to set mode"}), 400
 
 
-# ===== FOLLOW MODE SETTINGS =====
-
-
 @app.route("/set_follow_color")
 def set_follow_color():
-    """Set target color for follow mode"""
     color = request.args.get("color", "red")
 
     valid_colors = ["red", "green", "blue", "yellow", "orange"]
@@ -310,7 +270,6 @@ def set_follow_color():
 
 @app.route("/set_follow_distance")
 def set_follow_distance():
-    """Set follow distance"""
     try:
         distance = int(request.args.get("distance", 50))
         distance = max(20, min(100, distance))
@@ -326,12 +285,8 @@ def set_follow_distance():
         return jsonify({"status": "error", "message": "Invalid distance value"}), 400
 
 
-# ===== ROBOT CONTROL COMMANDS (Manual mode removed) =====
-
-
 @app.route("/stop")
 def stop():
-    """Stop motors"""
     robot_controller.stop()
     log_message("Command: STOP")
     socketio.emit("sensor_update", get_sensor_data())
@@ -340,19 +295,14 @@ def stop():
 
 @app.route("/emergency_stop")
 def emergency_stop():
-    """Emergency stop"""
     robot_controller.emergency_stop()
     log_message("EMERGENCY STOP executed", level="WARNING")
     socketio.emit("sensor_update", get_sensor_data())
     return jsonify({"status": "success", "command": "emergency_stop"})
 
 
-# ===== SPEED CONTROL =====
-
-
 @app.route("/set_speed")
 def set_speed():
-    """Set motor speed"""
     try:
         speed = int(request.args.get("value", 180))
         robot_controller.set_speed(speed)
@@ -363,11 +313,7 @@ def set_speed():
         return jsonify({"status": "error", "message": "Invalid speed value"}), 400
 
 
-# ===== LOG MANAGEMENT =====
-
-
 def log_message(message: str, level: str = "INFO"):
-    """Log message and emit to clients"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     time_str = datetime.now().strftime("%H:%M:%S")
     log_entry = f"[{timestamp}] {level}: {message}\n"
@@ -378,13 +324,11 @@ def log_message(message: str, level: str = "INFO"):
     except Exception as e:
         logger.error(f"Error writing to log file: {e}")
 
-    # Emit to clients
     socketio.emit("log_entry", {"time": time_str, "level": level, "message": message})
 
 
 @app.route("/read_log")
 def read_log():
-    """Read log file"""
     try:
         if os.path.exists(LOG_FILE):
             with open(LOG_FILE, "r", encoding="utf-8") as f:
@@ -398,7 +342,6 @@ def read_log():
 
 @app.route("/clear_log")
 def clear_log():
-    """Clear log file"""
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open(LOG_FILE, "w", encoding="utf-8") as f:
@@ -408,37 +351,21 @@ def clear_log():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-
-
-    
-
-# ===== SENSOR DATA =====
-
-
 def get_sensor_data() -> dict:
-    """Get current sensor/robot state"""
-    # Lấy trạng thái từ robot controller (đã bao gồm tốc độ motor)
     state = robot_controller.get_state()
     
-    # Mặc định (nếu không có dữ liệu)
     distance_value = 0.0
     line_sensors = [0] * 8
     line_pos = 0
-    
-    # Pin (Hiện tại chưa có cảm biến pin, nên để cố định hoặc 0 thay vì random)
-    # Bạn có thể sửa thành 100 hoặc 0 tùy ý để biết đây là giá trị giả định
-    battery_value = 100 
+    battery_value = 100
 
-    # Lấy dữ liệu THẬT từ Arduino (nếu đang dùng chế độ Arduino)
     if isinstance(motor_driver, ArduinoDriver):
         arduino_data = motor_driver.get_sensor_data()
         
-        # Lấy giá trị thực từ phần cứng
         distance_value = arduino_data.get("distance", 0.0)
         line_sensors = arduino_data.get("line", [0] * 8)
         line_pos = arduino_data.get("line_pos", 0)
         
-        # Cập nhật tốc độ thực tế từ Arduino (nếu có)
         if "left_speed" in arduino_data:
             state["left_motor_speed"] = arduino_data["left_speed"]
         if "right_speed" in arduino_data:
@@ -447,17 +374,16 @@ def get_sensor_data() -> dict:
     return {
         "state": state["state"],
         "speed": state["speed"],
-        "battery": battery_value,  # Không còn random
+        "battery": battery_value,
         "left_motor_speed": state["left_motor_speed"],
         "right_motor_speed": state["right_motor_speed"],
         "line_sensors": line_sensors,
         "line_position": line_pos,
-        "distance": distance_value, # Dữ liệu thật 100% hoặc 0.0
+        "distance": distance_value,
     }
 
 
 def get_target_data() -> dict:
-    """Get current target tracking data for follow mode"""
     if follow_controller:
         return follow_controller.get_target_data()
 
@@ -473,45 +399,30 @@ def get_target_data() -> dict:
     }
 
 
-# ===== SOCKETIO EVENTS =====
-
-
 @socketio.on("connect")
 def handle_connect():
-    """Handle client connection"""
     logger.info("Client connected")
     emit("connection_response", {"data": "Connected"})
-
-    # Send current mode and state
     emit("mode_update", {"mode": robot_controller.current_mode})
     emit("sensor_update", get_sensor_data())
 
-    # Send target data if in follow mode
     if robot_controller.current_mode == "follow":
         emit("target_update", get_target_data())
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    """Handle client disconnection"""
     logger.info("Client disconnected")
 
 
-# ===== BACKGROUND TASKS =====
-
-
 def send_sensor_data():
-    """Send sensor data periodically to all clients"""
     import time
-
     while True:
         socketio.sleep(2)
-
         try:
             sensor_data = get_sensor_data()
             socketio.emit("sensor_update", sensor_data)
 
-            # Send target data if in follow mode
             if robot_controller and robot_controller.current_mode == "follow":
                 target_data = get_target_data()
                 socketio.emit("target_update", target_data)
@@ -520,18 +431,12 @@ def send_sensor_data():
             logger.error(f"Error sending sensor data: {e}")
 
 
-# ===== MAIN =====
-
-
 def main():
-    """Main entry point"""
     global LOG_FILE
 
-    # Create directories if not exist
     os.makedirs("data/logs", exist_ok=True)
     os.makedirs("config", exist_ok=True)
 
-    # Initialize log file
     if not os.path.exists(LOG_FILE):
         with open(LOG_FILE, "w", encoding="utf-8") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -541,28 +446,18 @@ def main():
     logger.info("LogisticsBot Control System Starting...")
     logger.info("=" * 60)
 
-    # Initialize hardware
     if not initialize_hardware():
         logger.error("Failed to initialize hardware. Exiting.")
-        logger.error("Please check:")
-        logger.error("  1. Arduino is connected to USB port")
-        logger.error("  2. Serial port is correct in hardware_config.yaml")
-        logger.error("  3. User has permission to access serial port")
-        logger.error("     Run: sudo usermod -a -G dialout $USER")
         sys.exit(1)
 
     logger.info("Hardware initialized successfully")
 
-    # Register cleanup on exit
     import atexit
-
     atexit.register(release_web_camera)
     atexit.register(lambda: robot_controller.cleanup() if robot_controller else None)
 
-    # Start background task
     socketio.start_background_task(send_sensor_data)
 
-    # Run Flask-SocketIO server
     logger.info("Starting web server on http://0.0.0.0:5000")
     logger.info("Access dashboard at: http://<raspberry-pi-ip>:5000")
 
@@ -573,7 +468,6 @@ def main():
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
     finally:
-        # Cleanup
         release_web_camera()
         if robot_controller:
             robot_controller.cleanup()
