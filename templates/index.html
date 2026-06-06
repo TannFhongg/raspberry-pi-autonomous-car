@@ -38,111 +38,108 @@
 
         <!-- Main Content Grid -->
         <div class="content-grid">
-            <!-- Row 1: Video + Status -->
-            <div class="grid-row-1">
-                <!-- Video Stream Card -->
-                <div class="panel video-panel">
-                    <div class="panel-header">
-                        <i class="fas fa-video"></i> VIDEO STREAM
-                        <span class="stream-info">320x240 @ 20fps</span>
-                    </div>
-                    <div class="panel-body video-body">
-                        <div class="video-frame">
-                            <img src="/debug_feed" alt="Camera Feed" id="videoStream">
-                            <div class="ai-overlay" id="aiOverlay">
-                                <span class="overlay-tag">AI Detection Active</span>
-                            </div>
-                            <!-- Target Tracking Overlay -->
-                            <div class="target-overlay" id="targetOverlay" style="display: none;">
-                                <div class="target-box" id="targetBox"></div>
-                                <div class="target-label" id="targetLabel">Target: Red</div>
-                            </div>
-                        </div>
-                    </div>
+            <!-- Video Stream Card -->
+            <div class="panel video-panel">
+                <div class="panel-header">
+                    <i class="fas fa-video"></i> VIDEO STREAM
+                    <span class="stream-info">320x240 @ 20fps</span>
                 </div>
-
-                <!-- System Status Card -->
-                <div class="panel status-panel">
-                    <div class="panel-header">
-                        <i class="fas fa-chart-bar"></i> SYSTEM STATUS
-                    </div>
-                    <div class="panel-body status-body">
-                        <div class="status-item">
-                            <div class="status-label">
-                                <span class="status-dot" id="stateDot"></span>
-                                State
-                            </div>
-                            <div class="status-value" id="stateValue">STANDBY</div>
+                <div class="panel-body video-body">
+                    <div class="video-frame">
+                        <img src="/debug_feed" alt="Camera Feed" id="videoStream">
+                        <div class="ai-overlay" id="aiOverlay">
+                            <span class="overlay-tag">AI Detection Active</span>
                         </div>
-
-                        <div class="status-item">
-                            <div class="status-label">Speed</div>
-                            <div class="progress-container">
-                                <div class="progress-bar" id="speedBar" style="width: 70%"></div>
-                                <span class="progress-text" id="speedValue">180/255</span>
-                            </div>
-                        </div>
-
-                        <div class="status-item">
-                            <div class="status-label">Battery</div>
-                            <div class="progress-container battery">
-                                <div class="progress-bar" id="batteryBar" style="width: 78%"></div>
-                                <span class="progress-text" id="batteryValue">78%</span>
-                            </div>
-                        </div>
-
-                        <!-- NEW: Target Distance -->
-                        <div class="status-item" id="targetDistanceItem" style="display: none;">
-                            <div class="status-label">
-                                <i class="fas fa-bullseye"></i>
-                                Target Distance
-                            </div>
-                            <div class="status-value" id="targetDistanceValue">-- cm</div>
-                        </div>
-
-                        <!-- NEW: Tracking Status -->
-                        <div class="status-item" id="trackingStatusItem" style="display: none;">
-                            <div class="status-label">
-                                <i class="fas fa-crosshairs"></i>
-                                Tracking
-                            </div>
-                            <div class="status-value" id="trackingStatusValue">
-                                <span class="tracking-badge tracking-lost">Lost Target</span>
-                            </div>
-                        </div>
-
-
-
-                        <!-- NEW: Detection Confidence -->
-                        <div class="status-item" id="confidenceItem" style="display: none;">
-                            <div class="status-label">Confidence</div>
-                            <div class="progress-container confidence">
-                                <div class="progress-bar" id="confidenceBar" style="width: 0%"></div>
-                                <span class="progress-text" id="confidenceValue">0%</span>
-                            </div>
-                        </div>
-
-                        <div class="status-item">
-                            <div class="status-label">Uptime</div>
-                            <div class="status-value" id="uptimeValue">0h 0m</div>
+                        <!-- Target Tracking Overlay -->
+                        <div class="target-overlay" id="targetOverlay" style="display: none;">
+                            <div class="target-box" id="targetBox"></div>
+                            <div class="target-label" id="targetLabel">Target: Red</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Row 2: Manual Control -->
+            <!-- System Status Card -->
+            <div class="panel status-panel">
+                <div class="panel-header">
+                    <i class="fas fa-chart-bar"></i> SYSTEM STATUS
+                </div>
+                <div class="panel-body status-body">
+                    <div class="status-item">
+                        <div class="status-label">
+                            <span class="status-dot" id="stateDot"></span>
+                            State
+                        </div>
+                        <div class="status-value" id="stateValue">STANDBY</div>
+                    </div>
+
+                    <div class="status-item">
+                        <div class="status-label">Speed</div>
+                        <div class="progress-container">
+                            <div class="progress-bar" id="speedBar" style="width: 70%"></div>
+                            <span class="progress-text" id="speedValue">180/255</span>
+                        </div>
+                    </div>
+
+                    <div class="status-item">
+                        <div class="status-label">Battery</div>
+                        <div class="progress-container battery">
+                            <div class="progress-bar" id="batteryBar" style="width: 78%"></div>
+                            <span class="progress-text" id="batteryValue">78%</span>
+                        </div>
+                    </div>
+
+                    <!-- NEW: Target Distance -->
+                    <div class="status-item" id="targetDistanceItem" style="display: none;">
+                        <div class="status-label">
+                            <i class="fas fa-bullseye"></i>
+                            Target Distance
+                        </div>
+                        <div class="status-value" id="targetDistanceValue">-- cm</div>
+                    </div>
+
+                    <!-- NEW: Tracking Status -->
+                    <div class="status-item" id="trackingStatusItem" style="display: none;">
+                        <div class="status-label">
+                            <i class="fas fa-crosshairs"></i>
+                            Tracking
+                        </div>
+                        <div class="status-value" id="trackingStatusValue">
+                            <span class="tracking-badge tracking-lost">Lost Target</span>
+                        </div>
+                    </div>
+
+
+
+                    <!-- NEW: Detection Confidence -->
+                    <div class="status-item" id="confidenceItem" style="display: none;">
+                        <div class="status-label">Confidence</div>
+                        <div class="progress-container confidence">
+                            <div class="progress-bar" id="confidenceBar" style="width: 0%"></div>
+                            <span class="progress-text" id="confidenceValue">0%</span>
+                        </div>
+                    </div>
+
+                    <div class="status-item">
+                        <div class="status-label">Uptime</div>
+                        <div class="status-value" id="uptimeValue">0h 0m</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Center -->
             <div class="panel control-panel">
                 <div class="panel-header">
                     <i class="fas fa-gamepad"></i> CONTROL CENTER
                 </div>
                 <div class="panel-body control-body">
-                    <div class="control-right" style="width: 100%;">
+                    <div class="control-right">
                         <!-- Start/Standby Controls -->
-                        <div class="start-controls" style="display: flex; gap: 10px; margin-bottom: 20px;">
-                            <button class="btn btn-success" style="flex: 1; padding: 14px;" onclick="startSystem()">
+                        <div class="start-controls">
+                            <button class="btn btn-success" onclick="startSystem()">
                                 START RUNNING
                             </button>
-                            <button class="btn btn-warning" style="flex: 1; padding: 14px;" onclick="stopSystem()">
+                            <button class="btn btn-warning" onclick="stopSystem()">
                                 STANDBY
                             </button>
                         </div>
@@ -207,44 +204,40 @@
                 </div>
             </div>
 
-            <!-- Row 3: Sensors -->
-            <div class="grid-row-3">
-
-                <!-- Target Info (NEW) -->
-                <div class="panel detection-panel">
-                    <div class="panel-header">
-                        <i class="fas fa-crosshairs"></i> TARGET INFO
+            <!-- Target Info (NEW) -->
+            <div class="panel detection-panel">
+                <div class="panel-header">
+                    <i class="fas fa-crosshairs"></i> TARGET INFO
+                </div>
+                <div class="panel-body target-info-body">
+                    <div class="target-info-item">
+                        <div class="info-label">Target Color:</div>
+                        <div class="info-value" id="targetColorInfo">Red</div>
                     </div>
-                    <div class="panel-body target-info-body">
-                        <div class="target-info-item">
-                            <div class="info-label">Target Color:</div>
-                            <div class="info-value" id="targetColorInfo">Red</div>
+                    <div class="target-info-item">
+                        <div class="info-label">Position:</div>
+                        <div class="info-value" id="targetPositionInfo">
+                            <span id="targetX">--</span>, <span id="targetY">--</span>
                         </div>
-                        <div class="target-info-item">
-                            <div class="info-label">Position:</div>
-                            <div class="info-value" id="targetPositionInfo">
-                                <span id="targetX">--</span>, <span id="targetY">--</span>
-                            </div>
-                        </div>
-                        <div class="target-info-item">
-                            <div class="info-label">Distance:</div>
-                            <div class="info-value" id="targetDistanceInfo">-- cm</div>
-                        </div>
-                        <div class="target-info-item">
-                            <div class="info-label">Confidence:</div>
-                            <div class="info-value" id="targetConfidenceInfo">--</div>
-                        </div>
-                        <div class="target-info-item">
-                            <div class="info-label">Status:</div>
-                            <div class="info-value">
-                                <span class="tracking-badge tracking-lost" id="targetStatusBadge">Lost</span>
-                            </div>
+                    </div>
+                    <div class="target-info-item">
+                        <div class="info-label">Distance:</div>
+                        <div class="info-value" id="targetDistanceInfo">-- cm</div>
+                    </div>
+                    <div class="target-info-item">
+                        <div class="info-label">Confidence:</div>
+                        <div class="info-value" id="targetConfidenceInfo">--</div>
+                    </div>
+                    <div class="target-info-item">
+                        <div class="info-label">Status:</div>
+                        <div class="info-value">
+                            <span class="tracking-badge tracking-lost" id="targetStatusBadge">Lost</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Row 4: Activity Log -->
+            <!-- Activity Log -->
             <div class="panel log-panel">
                 <div class="panel-header">
                     <i class="fas fa-list"></i> ACTIVITY LOG
