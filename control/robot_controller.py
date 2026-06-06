@@ -21,7 +21,6 @@ from perception.lane_detector import detect_line
 from perception.camera_manager import CameraManager, get_web_camera 
 from perception.object_detector import ObjectDetector
 from perception.imu_sensor_fusion import IMUSensorFusion
-from perception.visual_odometry import VisualOdometry
 import cv2
 
 logger = logging.getLogger(__name__)

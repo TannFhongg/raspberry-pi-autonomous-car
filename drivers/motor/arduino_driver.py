@@ -80,32 +80,43 @@ class ArduinoDriver:
                 write_timeout=1
             )
             
-            # Wait for Arduino to boot
-            time.sleep(5)
+            # Wait for Arduino to boot (2s is enough per test_arduino.py)
+            time.sleep(2)
             
             # Flush buffers
             self.serial.reset_input_buffer()
             self.serial.reset_output_buffer()
             
-            # Send ping to check connection
-            response = self.send_command({'cmd': 'PING'})
-            if response and response.get('status') == 'ok':
-                self.connected = True
-                logger.info(f"Connected to Arduino on {self.port} (Camera-only mode)")
-                
-                # Start reading thread
-                self.running = True
-                self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
-                self.read_thread.start()
-                
-                # ✅ SAFETY: Start heartbeat thread để giữ Arduino watchdog alive
-                self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-                self.heartbeat_thread.start()
-                
-                return True
-            else:
-                logger.warning("Arduino did not respond to PING")
-                return False
+            # Start reading thread BEFORE sending PING
+            # This ensures response queue is ready
+            self.running = True
+            self.read_thread = threading.Thread(target=self._read_loop, daemon=True)
+            self.read_thread.start()
+            
+            # Wait a bit for read thread to start
+            time.sleep(0.1)
+            
+            # Send ping to check connection (with retry)
+            max_retries = 3
+            for attempt in range(max_retries):
+                response = self.send_command({'cmd': 'PING'})
+                if response and response.get('status') == 'ok':
+                    self.connected = True
+                    logger.info(f"Connected to Arduino on {self.port} (Camera-only mode)")
+                    
+                    # ✅ SAFETY: Start heartbeat thread để giữ Arduino watchdog alive
+                    self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+                    self.heartbeat_thread.start()
+                    
+                    return True
+                else:
+                    logger.warning(f"Arduino PING attempt {attempt + 1}/{max_retries} failed")
+                    if attempt < max_retries - 1:
+                        time.sleep(0.5)  # Wait before retry
+            
+            logger.error("Arduino did not respond to PING after retries")
+            self.running = False
+            return False
                 
         except serial.SerialException as e:
             logger.error(f"Failed to connect to Arduino: {e}")
