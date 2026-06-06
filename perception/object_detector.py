@@ -22,10 +22,16 @@ class ObjectDetector:
         else:
             logger.error(f"Model not found at {model_path}")
 
-    def detect(self, frame):
+    def detect(self, frame, draw_boxes=False):
         """
-        Nhận diện vật thể - KHÔNG vẽ bounding box
-        Chỉ trả về danh sách detections và frame gốc
+        Nhận diện vật thể
+        
+        Args:
+            frame: Input BGR frame
+            draw_boxes: If True, draw bounding boxes on frame (default: False)
+        
+        Returns:
+            (detections, annotated_frame or original_frame)
         
         ✅ CRITICAL BUG FIX: Frame giờ luôn là BGR (converted từ YUV420 trong camera_manager)
         → YOLO inference đúng, không còn color confusion
@@ -41,7 +47,7 @@ class ObjectDetector:
         # Inference với BGR frame (YOLO handles BGR→RGB conversion)
         results = self.model(frame, imgsz=640, conf=self.conf_threshold, verbose=False)
         
-        # Trích xuất thông tin detection (KHÔNG vẽ gì lên frame)
+        # Trích xuất thông tin detection
         detections = []
 
         for box in results[0].boxes:
@@ -56,4 +62,9 @@ class ObjectDetector:
                 'x': x, 'y': y, 'w': w, 'h': h
             })
 
-        return detections, frame
+        # Vẽ bounding boxes nếu draw_boxes=True
+        if draw_boxes and len(detections) > 0:
+            annotated_frame = results[0].plot()  # YOLO vẽ boxes
+            return detections, annotated_frame
+        else:
+            return detections, frame

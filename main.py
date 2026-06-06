@@ -186,9 +186,9 @@ def video_feed():
 @app.route("/debug_feed")
 def debug_feed():
     """
-    Debug video feed - shows processed frame based on current mode
-    Auto Mode: Lane detection debug frame (resized 320x240)
-    Follow Mode: Object tracking debug frame
+    Debug video feed - shows BGR color frames (320x240) based on current mode
+    - Auto Mode: Camera BGR feed (no lane visualization for performance)
+    - Follow Mode: Object detection with bounding boxes
     """
     def generate_debug_frames():
         # Ensure camera is started
@@ -208,13 +208,11 @@ def debug_feed():
                     current_mode = robot_controller.current_mode
                     
                     if current_mode == 'auto' and auto_controller:
-                        # Auto mode: Lane detection debug
-                        # ✅ FIX: Dùng get_debug_frame() thay vì đọc trực tiếp
+                        # Auto mode: BGR frame from camera (resized 320x240)
                         frame = auto_controller.get_debug_frame()
                     
                     elif current_mode == 'follow' and follow_controller:
-                        # Follow mode: Object tracking debug
-                        # ✅ FIX: Dùng get_debug_frame() thay vì đọc trực tiếp
+                        # Follow mode: Object tracking debug (BGR with bounding boxes)
                         frame = follow_controller.get_debug_frame()
                 
                 # Fallback to raw camera if no debug frame available
@@ -222,9 +220,11 @@ def debug_feed():
                     try:
                         camera = get_web_camera(config)
                         if camera.is_running():
-                            frame = camera.capture_frame()
-                            if frame is not None:
-                                frame = cv2.resize(frame, (320, 240))
+                            frame_yuv = camera.capture_frame()
+                            if frame_yuv is not None:
+                                # Convert YUV420 to BGR for web display
+                                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+                                frame = cv2.resize(frame_bgr, (320, 240))
                     except Exception:
                         pass
                 

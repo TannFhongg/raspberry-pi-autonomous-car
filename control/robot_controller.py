@@ -334,12 +334,9 @@ class AutoModeController:
         # ===== TIMING FIX: Dynamic dt calculation =====
         self.last_time = None  # Track thời gian thực tế giữa các iteration
         
-        # ===== FIX RACE CONDITION: Lock cho latest_debug_frame =====
-        # Flask /debug_feed đọc frame này → cần lock để tránh corrupt
+        # ===== WEB DASHBOARD: Lưu frame BGR để hiển thị =====
         self.debug_frame_lock = threading.Lock()
         self.latest_debug_frame = None
-        self.latest_error = 0
-        self.latest_correction = 0
         
         logger.info("Auto Mode Controller initialized")
     
@@ -396,10 +393,16 @@ class AutoModeController:
                 
                 # ============================================================
                 # ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần YOLO
+                # ✅ WEB DASHBOARD: Lưu frame BGR để hiển thị màu trên web
                 # ============================================================
                 # Lane detection sẽ dùng trực tiếp frame_yuv (lấy kênh Y)
                 # YOLO detection cần BGR → convert chỉ khi cần
                 frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
+                
+                # Lưu frame BGR cho web dashboard (resize to 320x240 để tiết kiệm bandwidth)
+                frame_resized = cv2.resize(frame_bgr, (320, 240))
+                with self.debug_frame_lock:
+                    self.latest_debug_frame = frame_resized
                 
                 # Detect traffic signs (logic only, no drawing)
                 detections, _ = self.detector.detect(frame_bgr)
@@ -500,20 +503,11 @@ class AutoModeController:
                 # Lane detection (CHỈ chạy khi KHÔNG approaching turn sign)
                 # ✅ OPTIMIZED: Truyền RAW YUV420 vào lane_detector
                 # → lane_detector sẽ lấy trực tiếp kênh Y (CPU cost = 0)
+                # ✅ PERFORMANCE: debug=False để tắt vẽ hình (tăng hiệu suất)
                 # ============================================================
-                raw_error, x_line, center_x, lane_debug_frame = detect_line(
-                    frame_yuv, self.detection_config
+                raw_error, x_line, center_x, _ = detect_line(
+                    frame_yuv, self.detection_config, debug=False
                 )
-                
-                # ✅ FIX RACE CONDITION: Resize và lưu debug frame với lock
-                # → Flask /debug_feed không đọc frame đang bị replace
-                if lane_debug_frame is not None:
-                    resized_frame = cv2.resize(lane_debug_frame, (320, 240))
-                    with self.debug_frame_lock:
-                        self.latest_debug_frame = resized_frame
-                else:
-                    with self.debug_frame_lock:
-                        self.latest_debug_frame = None
                 
                 # Lane validity check
                 is_lane_valid = abs(raw_error) <= self.MAX_ERROR_THRESHOLD
@@ -575,11 +569,8 @@ class AutoModeController:
                 # Áp dụng Low-Pass Filter (EMA) để làm mượt error
                 self.filtered_error = (self.smoothing_factor * raw_error) + ((1 - self.smoothing_factor) * self.filtered_error)
                 
-                # Cập nhật latest_error bằng giá trị đã lọc (hiển thị Dashboard mượt hơn)
-                self.latest_error = int(self.filtered_error)
-                
                 if not detections:
-                    self.robot.current_state = f'FOLLOWING LANE (Error: {self.latest_error:.0f}px)'
+                    self.robot.current_state = f'FOLLOWING LANE (Error: {int(self.filtered_error):.0f}px)'
                 
                 # ===== PID CONTROL với DYNAMIC dt =====
                 current_time = time.time()
@@ -596,7 +587,6 @@ class AutoModeController:
                 self.last_time = current_time
                 
                 correction = self.pid.compute(self.filtered_error, dt)
-                self.latest_correction = correction
                 
                 # Calculate motor speeds
                 left_speed = max(-255, min(255, int(self.base_speed - correction)))
@@ -627,13 +617,7 @@ class AutoModeController:
         ✅ FIX: Dùng wall clock time thay vì fake counter
         ✅ OPTIMIZED: Nhận RAW YUV420, truyền trực tiếp vào lane_detector
         """
-        error, x_line, center_x, recovery_debug_frame = detect_line(frame_yuv, self.detection_config)
-        
-        # ✅ FIX: Cập nhật debug frame ngay cả khi đang recovery (với lock)
-        if recovery_debug_frame is not None:
-            resized_frame = cv2.resize(recovery_debug_frame, (320, 240))
-            with self.debug_frame_lock:
-                self.latest_debug_frame = resized_frame
+        error, x_line, center_x, _ = detect_line(frame_yuv, self.detection_config, debug=False)
         
         if abs(error) <= self.MAX_ERROR_THRESHOLD:
             return True
@@ -673,17 +657,15 @@ class AutoModeController:
     
     def get_debug_frame(self):
         """
-        Get latest debug frame (thread-safe)
-        
-        ✅ FIX: Thêm lock để Flask không đọc frame đang bị replace
+        Get latest BGR frame for web dashboard (thread-safe)
         """
         with self.debug_frame_lock:
             return self.latest_debug_frame
     
     def get_pid_status(self):
         return {
-            'error': self.latest_error,
-            'correction': self.latest_correction,
+            'error': int(self.filtered_error),
+            'correction': 0,
             **self.pid.get_components()
         }
 
@@ -876,12 +858,13 @@ class FollowModeController:
                 # ============================================================
                 frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
                 
-                # Detect objects
-                detections, annotated_frame = self.detector.detect(frame_bgr)
+                # Detect objects (detector.detect returns annotated frame with boxes)
+                detections, annotated_frame = self.detector.detect(frame_bgr, draw_boxes=True)
                 
-                # ✅ FIX: Save debug frame với lock
+                # ✅ WEB DASHBOARD: Resize and save BGR frame (320x240 for bandwidth)
+                frame_resized = cv2.resize(annotated_frame, (320, 240))
                 with self.debug_frame_lock:
-                    self.latest_debug_frame = annotated_frame
+                    self.latest_debug_frame = frame_resized
                 
                 # Filter by target color
                 target_class = self.color_map.get(self.target_color_name)
@@ -961,64 +944,6 @@ class FollowModeController:
                     
                     # Update status
                     self.robot.current_state = status
-                    
-                    # ===== DRAW ENHANCED DEBUG INFO =====
-                    # ✅ FIX: Copy frame RA NGOÀI lock, vẽ NGOÀI lock, swap TRONG lock
-                    # Lock chỉ để copy/swap pointer (< 1ms), KHÔNG hold trong quá trình vẽ
-                    with self.debug_frame_lock:
-                        if self.latest_debug_frame is not None:
-                            # Copy frame RA NGOÀI để vẽ (lock time < 1ms)
-                            frame_to_draw = self.latest_debug_frame.copy()
-                        else:
-                            frame_to_draw = None
-                    
-                    # Vẽ NGOÀI lock (2-5ms, không block Flask)
-                    if frame_to_draw is not None:
-                        h, w = frame_to_draw.shape[:2]
-                        
-                        # Draw target size zone (green circle)
-                        cv2.circle(frame_to_draw, 
-                                  (int(center_x), int(frame_h / 2)), 
-                                  self.TARGET_SIZE, (0, 255, 0), 2)
-                        cv2.putText(frame_to_draw, 
-                                   f"Target: {self.TARGET_SIZE}px", 
-                                   (int(center_x) - self.TARGET_SIZE + 10, 
-                                    int(frame_h / 2) - self.TARGET_SIZE - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                        
-                        # Draw center line
-                        cv2.line(frame_to_draw, 
-                                (int(center_x), 0), 
-                                (int(center_x), h), 
-                                (0, 255, 255), 1)
-                        
-                        # Draw object to center arrow
-                        cv2.arrowedLine(frame_to_draw,
-                                       (int(center_x), h - 50),
-                                       (self.target_x, h - 50),
-                                       (255, 0, 255), 3, tipLength=0.3)
-                        
-                        # Draw info panel
-                        info_y = 30
-                        info_lines = [
-                            f"Mode: FOLLOW",
-                            f"Target: {self.target_color_name.upper()}",
-                            f"Size: {obj_size:.0f}px (Goal: {self.TARGET_SIZE}px)",
-                            f"H-Error: {error_horizontal:.0f}px",
-                            f"D-Error: {error_distance:.0f}px",
-                            f"L-Speed: {left_speed:+4d}",
-                            f"R-Speed: {right_speed:+4d}"
-                        ]
-                        
-                        for line in info_lines:
-                            cv2.putText(frame_to_draw, line,
-                                       (10, info_y),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                            info_y += 20
-                        
-                        # Swap frame TRONG lock (atomic, < 1μs)
-                        with self.debug_frame_lock:
-                            self.latest_debug_frame = frame_to_draw
                 
                 else:
                     # No target found - STOP and SEARCH
@@ -1027,25 +952,6 @@ class FollowModeController:
                     self.confidence = 0
                     self.target_w = 0
                     self.target_h = 0
-                    
-                    # ✅ FIX: Copy-Draw-Swap pattern (lock chỉ để copy/swap)
-                    with self.debug_frame_lock:
-                        if self.latest_debug_frame is not None:
-                            frame_to_draw = self.latest_debug_frame.copy()
-                        else:
-                            frame_to_draw = None
-                    
-                    # Vẽ NGOÀI lock
-                    if frame_to_draw is not None:
-                        h, w = frame_to_draw.shape[:2]
-                        cv2.putText(frame_to_draw,
-                                   f"SEARCHING {self.target_color_name.upper()}...",
-                                   (10, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        
-                        # Swap TRONG lock
-                        with self.debug_frame_lock:
-                            self.latest_debug_frame = frame_to_draw
                 
                 time.sleep(0.05)
                 

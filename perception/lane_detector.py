@@ -82,10 +82,6 @@ def detect_line(frame, config=None):
     # LANE WIDTH PIXELS - ĐÃ CALIBRATE CHO 640x480
     # ============================================================
     LANE_WIDTH_PIXELS = 457  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
-    
-    # Debug frame - Chuyển sang BGR để vẽ màu
-    frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    cv2.line(frame_debug, (center_x, 0), (center_x, height), (0, 255, 255), 2)
 
     # ============================================================
     # 1. TIỀN XỬ LÝ ẢNH - CHO NỀN TRẮNG, VẠCH ĐEN
@@ -121,9 +117,6 @@ def detect_line(frame, config=None):
     mask = np.zeros_like(edges)
     cv2.fillPoly(mask, roi_vertices, 255)
     masked_edges = cv2.bitwise_and(edges, mask)
-    
-    # Vẽ ROI lên debug frame
-    cv2.polylines(frame_debug, roi_vertices, True, (255, 0, 0), 2)
 
     # ============================================================
     # 3. HOUGH TRANSFORM
@@ -173,7 +166,7 @@ def detect_line(frame, config=None):
     left_lane_x = None
     right_lane_x = None
     
-    def calculate_lane_x(lines, color):
+    def calculate_lane_x(lines):
         """Tính tọa độ x tại đáy ảnh từ danh sách lines"""
         if not lines:
             return None
@@ -189,16 +182,14 @@ def detect_line(frame, config=None):
             if 0 <= x_bottom <= width:
                 x_bottoms.append(x_bottom)
                 slopes_valid.append(slope)
-                # Vẽ line để debug
-                cv2.line(frame_debug, (x1, y1), (x2, y2), color, 2)
         
         if x_bottoms:
             # Lấy MEDIAN thay vì MEAN (chống outlier tốt hơn)
             return int(np.median(x_bottoms))
         return None
     
-    left_lane_x = calculate_lane_x(left_lines, (0, 255, 0))    # Xanh lá
-    right_lane_x = calculate_lane_x(right_lines, (255, 0, 0))  # Xanh dương
+    left_lane_x = calculate_lane_x(left_lines)
+    right_lane_x = calculate_lane_x(right_lines)
 
     # ============================================================
     # 6. LOGIC TÍNH TÂM ĐƯỜNG (3 trường hợp)
@@ -211,40 +202,24 @@ def detect_line(frame, config=None):
         x_line = (left_lane_x + right_lane_x) // 2
         lane_status = "BOTH_LANES"
         
-        # Vẽ 2 điểm vạch
-        cv2.circle(frame_debug, (left_lane_x, height - 10), 10, (0, 255, 0), -1)
-        cv2.circle(frame_debug, (right_lane_x, height - 10), 10, (255, 0, 0), -1)
-        cv2.putText(frame_debug, "BOTH LANES", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
     elif left_lane_x is not None:
         # CASE 2: Chỉ thấy TRÁI
         x_line = left_lane_x + (LANE_WIDTH_PIXELS // 2)
         lane_status = "LEFT_ONLY"
-        
-        cv2.circle(frame_debug, (left_lane_x, height - 10), 10, (0, 255, 0), -1)
-        cv2.putText(frame_debug, "LEFT ONLY", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
     elif right_lane_x is not None:
         # CASE 3: Chỉ thấy PHẢI
         x_line = right_lane_x - (LANE_WIDTH_PIXELS // 2)
         lane_status = "RIGHT_ONLY"
         
-        cv2.circle(frame_debug, (right_lane_x, height - 10), 10, (255, 0, 0), -1)
-        cv2.putText(frame_debug, "RIGHT ONLY", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
     else:
         # CASE 4: Mất cả 2
         x_line = center_x
         lane_status = "NO_LANE"
         forced_error = 999
-        cv2.putText(frame_debug, "NO LANE DETECTED", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     # ============================================================
-    # 7. TÍNH SAI SỐ VÀ VẼ DEBUG
+    # 7. TÍNH SAI SỐ (KHÔNG VẼ DEBUG)
     # ============================================================
     CAMERA_OFFSET = -15  # Hiệu chỉnh nếu camera không đặt chính giữa robot
     if lane_status == "NO_LANE":
@@ -252,32 +227,7 @@ def detect_line(frame, config=None):
     else:
         error = x_line - center_x + CAMERA_OFFSET  # Các trường hợp còn lại tính toán bình thường
     
-    # Vẽ đường tâm dự đoán (màu tím)
-    cv2.line(frame_debug, (x_line, 0), (x_line, height), (255, 0, 255), 3)
-    
-    # Vẽ mũi tên chỉ hướng điều chỉnh
-    arrow_y = height - 50
-    cv2.arrowedLine(frame_debug, (center_x, arrow_y), 
-                    (x_line, arrow_y), (0, 0, 255), 4, tipLength=0.3)
-    
-    # Hiển thị thông tin chi tiết
-    info_y = height - 10
-    cv2.putText(frame_debug, f"Error: {error:+4d}px | Status: {lane_status}", 
-                (10, info_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    
-    # Thêm thông tin debug bổ sung (góc trên phải)
-    info_lines = [
-        f"Left: {left_lane_x if left_lane_x else 'None'}",
-        f"Right: {right_lane_x if right_lane_x else 'None'}",
-        f"Lane Width: {LANE_WIDTH_PIXELS}px"
-    ]
-    
-    for i, line_text in enumerate(info_lines):
-        cv2.putText(frame_debug, line_text, 
-                    (width - 220, 30 + i*25), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-    
-    return error, x_line, center_x, frame_debug
+    return error, x_line, center_x, None
 
 
 def detect_line_black_adaptive(frame):
@@ -313,8 +263,6 @@ def detect_line_black_adaptive(frame):
     height, width = 480, 640
     center_x = width // 2
     LANE_WIDTH_PIXELS = 457  # Cùng giá trị với detect_line()
-    
-    frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     
     # Làm mờ
     blur = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -355,11 +303,6 @@ def detect_line_black_adaptive(frame):
             right_x = int(M_right['m10'] / M_right['m00'])
             
             x_line = (left_x + right_x) // 2
-            
-            cv2.drawContours(frame_debug, [left_contour], -1, (0, 255, 0), 2)
-            cv2.drawContours(frame_debug, [right_contour], -1, (255, 0, 0), 2)
-            cv2.putText(frame_debug, "BOTH LANES (Adaptive)", (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         else:
             x_line = center_x
             
@@ -372,32 +315,16 @@ def detect_line_black_adaptive(frame):
             # Dự đoán: Nếu contour ở bên trái → thêm nửa lane width
             if cx < center_x:
                 x_line = cx + (LANE_WIDTH_PIXELS // 2)
-                cv2.putText(frame_debug, "LEFT ONLY (Adaptive)", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             else:
                 x_line = cx - (LANE_WIDTH_PIXELS // 2)
-                cv2.putText(frame_debug, "RIGHT ONLY (Adaptive)", (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            
-            cv2.drawContours(frame_debug, [valid_contours[0]], -1, (0, 255, 0), 2)
         else:
             x_line = center_x
     else:
         x_line = center_x
-        cv2.putText(frame_debug, "NO LANE (Adaptive)", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     
     error = x_line - center_x
     
-    # Vẽ debug
-    cv2.line(frame_debug, (center_x, 0), (center_x, height), (0, 255, 255), 2)
-    cv2.line(frame_debug, (x_line, 0), (x_line, height), (255, 0, 255), 3)
-    cv2.arrowedLine(frame_debug, (center_x, height - 50), 
-                    (x_line, height - 50), (0, 0, 255), 4)
-    cv2.putText(frame_debug, f"Error: {error:+d}px", 
-                (10, height - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    
-    return error, x_line, center_x, frame_debug
+    return error, x_line, center_x, None
 
 
 def calibrate_lane_width(frame, show_result=False):
@@ -441,14 +368,7 @@ def calibrate_lane_width(frame, show_result=False):
     # Tìm đường thẳng
     lines = cv2.HoughLinesP(edges, 1, np.pi/180, 25, minLineLength=35, maxLineGap=20)
     
-    frame_calib = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    
     if lines is not None:
-        # Vẽ tất cả lines
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(frame_calib, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        
         # Tìm x min và max
         x_coords = []
         for line in lines:
@@ -460,23 +380,11 @@ def calibrate_lane_width(frame, show_result=False):
             right_x = max(x_coords)
             lane_width_pixels = right_x - left_x
             
-            cv2.circle(frame_calib, (left_x, height - 10), 10, (0, 255, 0), -1)
-            cv2.circle(frame_calib, (right_x, height - 10), 10, (255, 0, 0), -1)
-            cv2.line(frame_calib, (left_x, height - 30), 
-                     (right_x, height - 30), (255, 255, 0), 3)
-            
-            cv2.putText(frame_calib, f"Lane: {lane_width_pixels}px = 38cm", 
-                        (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-            
-            # LƯU ẢNH thay vì hiển thị
-            cv2.imwrite("calibration_result.jpg", frame_calib)
-            
             print(f"\n{'='*60}")
             print(f"✅ CALIBRATION THÀNH CÔNG:")
             print(f"  Lane Width (Real):  38 cm")
             print(f"  Lane Width (Pixel): {lane_width_pixels} px")
             print(f"  Scale Factor:       {38 / lane_width_pixels:.4f} cm/px")
-            print(f"  📸 Đã lưu: calibration_result.jpg")
             print(f"{'='*60}\n")
             print(f"⚠️  CẬP NHẬT NGAY:")
             print(f"  Sửa dòng 53 trong lane_detector.py:")
