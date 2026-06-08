@@ -689,10 +689,6 @@ input {
     background: #facc15;
 }
 
-.color-orange {
-    background: #f97316;
-}
-
 .emergency-btn {
     min-height: 48px;
     display: inline-flex;

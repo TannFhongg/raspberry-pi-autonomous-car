@@ -61,6 +61,7 @@ ai:
     hough_threshold: 40       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
     min_line_length: 50       # Độ dài tối thiểu của đường thẳng (pixel)
     max_line_gap: 25         # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
+    lane_width_pixels: 457    # Độ rộng lane đã calibrate theo frame camera thực tế
     
     # Preprocessing - Tiền xử lý ảnh
     blur_kernel: 7            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)

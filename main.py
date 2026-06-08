@@ -54,7 +54,6 @@ LOG_FILE = "data/logs/robot.log"
 # Follow mode settings
 follow_settings = {
     "target_color": "red",
-    "follow_distance": 50,
     "tracking": False,
     "target_x": 0,
     "target_y": 0,
@@ -96,17 +95,13 @@ def initialize_hardware():
             logger.info("Arduino Motor Driver initialized")
 
         else:
-            # ===== BẮT ĐẦU SỬA ĐỔI =====
-            # Use Raspberry Pi GPIO directly (legacy mode)
-
-            # Import L298NDriver chỉ khi cần thiết (local import)
-            # Điều này tránh lỗi 'ModuleNotFoundError' nếu 'gpiozero' không được cài đặt
-            from drivers.motor.l298n_driver import L298NDriver
-
-            logger.info("Initializing L298N driver (direct GPIO mode)...")
-            motor_driver = L298NDriver(config)
-            logger.info("L298N Motor Driver initialized")
-            # ===== KẾT THÚC SỬA ĐỔI =====
+            logger.error(
+                "Unsupported control_mode '%s'. Direct GPIO mode requires "
+                "drivers/motor/l298n_driver.py, which is not present. "
+                "Set control_mode: 'arduino' in config/hardware_config.yaml.",
+                control_mode,
+            )
+            return False
 
         # Initialize robot controller
         robot_controller = RobotController(motor_driver, config)
@@ -251,7 +246,7 @@ def debug_feed():
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
-                time.sleep(0.05)  # ~20 FPS
+                time.sleep(0.02)  # ~20 FPS
 
             except Exception as e:
                 logger.error(f"Debug feed error: {e}")
@@ -274,35 +269,76 @@ def set_mode():
     if mode not in ["auto", "follow", "idle"]:
         return jsonify({"status": "error", "message": "Invalid mode"}), 400
 
-    if robot_controller.set_mode(mode):
-        log_message(f"Mode changed to: {mode.upper()}")
+    if robot_controller is None:
+        logger.error("Mode switch rejected: robot controller is not initialized")
+        return jsonify({"status": "error", "message": "Robot controller unavailable"}), 503
 
-        # Start/stop controllers based on mode
-        if mode == "auto":
-            if auto_controller:
-                auto_controller.start()
-            if follow_controller:
-                follow_controller.stop()
-        elif mode == "follow":
-            if follow_controller:
-                follow_controller.start()
-            if auto_controller:
-                auto_controller.stop()
-        elif mode == "idle":
-            if auto_controller:
-                auto_controller.stop()
-            if follow_controller:
-                follow_controller.stop()
-            if robot_controller:
-                robot_controller.stop()
+    previous_mode = robot_controller.current_mode
+    previous_state = robot_controller.current_state
 
-        # Emit state update
-        socketio.emit("mode_update", {"mode": mode})
+    if mode == "idle":
+        if auto_controller:
+            auto_controller.stop()
+        if follow_controller:
+            follow_controller.stop()
+        robot_controller.set_mode("idle")
+        robot_controller.stop()
+        log_message("Mode changed to: IDLE")
+        socketio.emit("mode_update", {"mode": "idle"})
         socketio.emit("sensor_update", get_sensor_data())
+        return jsonify({"status": "success", "mode": "idle"})
 
-        return jsonify({"status": "success", "mode": mode})
-    else:
+    target_controller = auto_controller if mode == "auto" else follow_controller
+    other_controller = follow_controller if mode == "auto" else auto_controller
+
+    if target_controller is None:
+        logger.error(f"Mode switch failed: {mode} controller is not initialized")
+        return jsonify({"status": "error", "message": f"{mode} controller unavailable"}), 503
+
+    if not robot_controller.set_mode(mode):
         return jsonify({"status": "error", "message": "Failed to set mode"}), 400
+
+    started = bool(getattr(target_controller, "running", False))
+    if not started:
+        try:
+            started = target_controller.start()
+        except Exception as e:
+            logger.error(f"Mode switch to {mode} raised during start: {e}")
+            started = False
+
+    if not started:
+        logger.error(
+            "Mode switch to %s failed. Camera/controller did not start. "
+            "Rolling back from previous mode=%s state=%s.",
+            mode,
+            previous_mode,
+            previous_state,
+        )
+        try:
+            target_controller.stop()
+        except Exception as e:
+            logger.error(f"Error stopping failed {mode} controller: {e}")
+
+        if auto_controller:
+            auto_controller.stop()
+        if follow_controller:
+            follow_controller.stop()
+        robot_controller.set_mode("idle")
+        robot_controller.stop()
+
+        message = f"Failed to start {mode} mode. Check camera/controller logs."
+        log_message(message, level="ERROR")
+        socketio.emit("mode_update", {"mode": "idle"})
+        socketio.emit("sensor_update", get_sensor_data())
+        return jsonify({"status": "error", "message": message, "mode": "idle"}), 503
+
+    if other_controller:
+        other_controller.stop()
+
+    log_message(f"Mode changed to: {mode.upper()}")
+    socketio.emit("mode_update", {"mode": mode})
+    socketio.emit("sensor_update", get_sensor_data())
+    return jsonify({"status": "success", "mode": mode})
 
 
 # ===== FOLLOW MODE SETTINGS =====
@@ -313,35 +349,20 @@ def set_follow_color():
     """Set target color for follow mode"""
     color = request.args.get("color", "red")
 
-    valid_colors = ["red", "green", "blue", "yellow", "orange"]
+    valid_colors = ["red", "green", "blue", "yellow"]
     if color not in valid_colors:
         return jsonify({"status": "error", "message": "Invalid color"}), 400
+
+    if follow_controller is None:
+        logger.error("Follow color rejected: follow controller is not initialized")
+        return jsonify({"status": "error", "message": "Follow controller unavailable"}), 503
 
     follow_settings["target_color"] = color
     log_message(f"Target color set to: {color.upper()}")
 
-    if follow_controller:
-        follow_controller.set_target_color(color)
+    follow_controller.set_target_color(color)
 
     return jsonify({"status": "success", "color": color})
-
-
-@app.route("/set_follow_distance")
-def set_follow_distance():
-    """Set follow distance"""
-    try:
-        distance = int(request.args.get("distance", 50))
-        distance = max(20, min(100, distance))
-
-        follow_settings["follow_distance"] = distance
-        log_message(f"Follow distance set to: {distance} cm")
-
-        if follow_controller:
-            follow_controller.set_follow_distance(distance)
-
-        return jsonify({"status": "success", "distance": distance})
-    except ValueError:
-        return jsonify({"status": "error", "message": "Invalid distance value"}), 400
 
 
 # ===== ROBOT CONTROL COMMANDS (Manual mode removed) =====
@@ -350,6 +371,10 @@ def set_follow_distance():
 @app.route("/stop")
 def stop():
     """Stop controllers and return to standby"""
+    if robot_controller is None:
+        logger.error("Stop rejected: robot controller is not initialized")
+        return jsonify({"status": "error", "message": "Robot controller unavailable"}), 503
+
     robot_controller.set_mode("idle")
     if auto_controller:
         auto_controller.stop()
@@ -365,6 +390,10 @@ def stop():
 @app.route("/emergency_stop")
 def emergency_stop():
     """Emergency stop"""
+    if robot_controller is None:
+        logger.error("Emergency stop rejected: robot controller is not initialized")
+        return jsonify({"status": "error", "message": "Robot controller unavailable"}), 503
+
     robot_controller.emergency_stop()
     log_message("EMERGENCY STOP executed", level="WARNING")
     socketio.emit("sensor_update", get_sensor_data())
@@ -377,12 +406,24 @@ def emergency_stop():
 @app.route("/set_speed")
 def set_speed():
     """Set motor speed"""
+    if robot_controller is None:
+        logger.error("Speed update rejected: robot controller is not initialized")
+        return jsonify({"status": "error", "message": "Robot controller unavailable"}), 503
+
     try:
         speed = int(request.args.get("value", 180))
-        robot_controller.set_speed(speed)
-        log_message(f"Speed set to: {speed}")
+        if speed < 0 or speed > 255:
+            return jsonify({"status": "error", "message": "Speed must be 0-255"}), 400
+
+        applied_speed = robot_controller.set_speed(speed)
+        if auto_controller:
+            auto_controller.set_speed(applied_speed)
+        if follow_controller:
+            follow_controller.set_speed(applied_speed)
+
+        log_message(f"Speed set to: {applied_speed}")
         socketio.emit("sensor_update", get_sensor_data())
-        return jsonify({"status": "success", "speed": speed})
+        return jsonify({"status": "success", "speed": applied_speed})
     except ValueError:
         return jsonify({"status": "error", "message": "Invalid speed value"}), 400
 
@@ -441,6 +482,18 @@ def clear_log():
 
 def get_sensor_data() -> dict:
     """Get current sensor/robot state"""
+    if robot_controller is None:
+        return {
+            "state": "CONTROLLER UNAVAILABLE",
+            "speed": 0,
+            "battery": 0,
+            "left_motor_speed": 0,
+            "right_motor_speed": 0,
+            "line_sensors": [0] * 8,
+            "line_position": 0,
+            "distance": 0.0,
+        }
+
     # Lấy trạng thái từ robot controller (đã bao gồm tốc độ motor)
     state = robot_controller.get_state()
 
@@ -507,11 +560,12 @@ def handle_connect():
     emit("connection_response", {"data": "Connected"})
 
     # Send current mode and state
-    emit("mode_update", {"mode": robot_controller.current_mode})
+    mode = robot_controller.current_mode if robot_controller else "idle"
+    emit("mode_update", {"mode": mode})
     emit("sensor_update", get_sensor_data())
 
     # Send target data if in follow mode
-    if robot_controller.current_mode == "follow":
+    if robot_controller and robot_controller.current_mode == "follow":
         emit("target_update", get_target_data())
 
 

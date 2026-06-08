@@ -78,12 +78,15 @@ class RobotController:
         # Current state
         self.current_mode = 'idle'
         self.current_state = 'STANDBY'
-        self.current_speed = 90
+        self.current_speed = self._clamp_speed(
+            config.get('robot', {}).get('default_speed', 180)
+        )
 
         # Safety
         self.emergency_stopped = False
         self.last_command_time = time.time()
         self.timeout = config.get('safety', {}).get('timeout', 5.0)
+        self.watchdog_triggered = False
 
         # Watchdog thread
         self.running = True
@@ -107,6 +110,11 @@ class RobotController:
 
     def smart_turn(self, target_angle: float, speed: int = 200, timeout: float = 5.0):
         """Smart turn using IMU"""
+        if self.emergency_stopped:
+            logger.warning("Smart turn blocked: emergency stop is active")
+            self.driver.stop()
+            return False
+
         if speed < 130:
             logger.warning(f"Speed {speed} too low, setting to 130")
             speed = 130
@@ -116,12 +124,11 @@ class RobotController:
 
         if abs(target_angle) > 180:
             logger.error(f"❌ Invalid angle: {target_angle}° (must be -180 to 180)")
-            return
+            return False
 
         if not hasattr(self, 'imu') or self.imu is None or not self.imu.connected:
             logger.warning("⚠️ IMU unavailable! Using time-based fallback.")
-            self._fallback_turn(target_angle, speed)
-            return
+            return self._fallback_turn(target_angle, speed)
 
         logger.info(f"🔄 Smart Turn START: Target {target_angle}° at speed {speed}")
 
@@ -132,6 +139,10 @@ class RobotController:
             stuck_counter = 0
 
             while True:
+                if self.emergency_stopped:
+                    logger.warning("Smart turn interrupted by emergency stop")
+                    return False
+
                 current_yaw = self.imu.get_yaw()
                 error = abs(target_angle) - abs(current_yaw)
 
@@ -168,31 +179,52 @@ class RobotController:
                     current_speed = max(130, int(speed * 0.5))
 
                 if target_angle > 0:
-                    self.driver.turn_left(current_speed)
+                    if not self.safe_turn_left(current_speed):
+                        return False
                 else:
-                    self.driver.turn_right(current_speed)
+                    if not self.safe_turn_right(current_speed):
+                        return False
 
                 time.sleep(0.01)
 
         except Exception as e:
             logger.error(f"❌ Error during smart turn: {e}")
+            return False
 
         finally:
             self.driver.stop()
             time.sleep(0.2)
 
+        return True
+
     def _fallback_turn(self, target_angle: float, speed: int):
         """Fallback turn based on time"""
+        if self.emergency_stopped:
+            logger.warning("Fallback turn blocked: emergency stop is active")
+            self.driver.stop()
+            return False
+
         duration = 0.6 * (abs(target_angle) / 90.0)
         logger.info(f"⏱️ Fallback Turn: {target_angle}° for {duration:.2f}s")
 
-        if target_angle > 0:
-            self.driver.turn_left(speed)
-        else:
-            self.driver.turn_right(speed)
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            if self.emergency_stopped:
+                logger.warning("Fallback turn interrupted by emergency stop")
+                self.driver.stop()
+                return False
 
-        time.sleep(duration)
+            if target_angle > 0:
+                if not self.safe_turn_left(speed):
+                    return False
+            else:
+                if not self.safe_turn_right(speed):
+                    return False
+
+            time.sleep(0.02)
+
         self.driver.stop()
+        return True
 
     def set_mode(self, mode: str):
         if mode in ['auto', 'follow', 'idle']:
@@ -207,9 +239,23 @@ class RobotController:
             return True
         return False
 
-    def set_speed(self, speed: int):
-        self.current_speed = max(0, min(255, speed))
+    @staticmethod
+    def _clamp_speed(speed: int) -> int:
+        return max(0, min(255, int(speed)))
+
+    def _limit_motor_speed(self, speed: int) -> int:
+        speed = max(-255, min(255, int(speed)))
+        if speed > 0:
+            return min(speed, self.current_speed)
+        if speed < 0:
+            return max(speed, -self.current_speed)
+        return 0
+
+    def set_speed(self, speed: int) -> int:
+        self.current_speed = self._clamp_speed(speed)
+        self.watchdog_triggered = False
         logger.info(f"Speed set to: {self.current_speed}")
+        return self.current_speed
 
     def safe_set_motors(self, left_speed: int, right_speed: int) -> bool:
         """
@@ -229,6 +275,9 @@ class RobotController:
             self.driver.stop()
             return False
 
+        left_speed = self._limit_motor_speed(left_speed)
+        right_speed = self._limit_motor_speed(right_speed)
+
         # Normal operation - execute command
         self.driver.set_motors(left_speed, right_speed)
         self._update_command_time()
@@ -239,6 +288,8 @@ class RobotController:
         if self.emergency_stopped:
             self.driver.stop()
             return False
+        speed = self._clamp_speed(speed)
+        speed = min(speed, self.current_speed)
         self.driver.turn_left(speed)
         self._update_command_time()
         return True
@@ -248,6 +299,8 @@ class RobotController:
         if self.emergency_stopped:
             self.driver.stop()
             return False
+        speed = self._clamp_speed(speed)
+        speed = min(speed, self.current_speed)
         self.driver.turn_right(speed)
         self._update_command_time()
         return True
@@ -290,10 +343,48 @@ class RobotController:
 
     def _update_command_time(self):
         self.last_command_time = time.time()
+        self.watchdog_triggered = False
+
+    def check_watchdog_timeout(self, now: Optional[float] = None) -> bool:
+        """Stop motors if active command heartbeat has expired."""
+        if self.emergency_stopped or self.timeout <= 0:
+            return False
+
+        now = time.time() if now is None else now
+        if now - self.last_command_time <= self.timeout:
+            self.watchdog_triggered = False
+            return False
+
+        try:
+            left_speed, right_speed = self.driver.get_speeds()
+        except Exception as e:
+            logger.error(f"Watchdog could not read motor speeds: {e}")
+            left_speed, right_speed = 0, 0
+
+        active_mode = self.current_mode in ['auto', 'follow']
+        motors_active = left_speed != 0 or right_speed != 0
+
+        if not active_mode and not motors_active:
+            return False
+
+        self.driver.stop()
+        self.current_mode = 'idle'
+        self.current_state = 'WATCHDOG TIMEOUT - STOPPED'
+
+        if not self.watchdog_triggered:
+            age = now - self.last_command_time
+            logger.warning(
+                f"Watchdog timeout: no valid command for {age:.1f}s "
+                f"(limit {self.timeout:.1f}s). Motors stopped."
+            )
+
+        self.watchdog_triggered = True
+        return True
 
     def _watchdog(self):
         while self.running:
             time.sleep(0.5)
+            self.check_watchdog_timeout()
 
     def cleanup(self):
         self.running = False
@@ -405,15 +496,24 @@ class AutoModeController:
         self.robot.driver.stop()
         logger.info("Auto mode stopped")
 
+    def set_speed(self, speed: int) -> int:
+        """Update auto lane-following base speed at runtime."""
+        speed = self.robot._clamp_speed(speed)
+        self.default_speed = speed
+        self.base_speed = speed
+        logger.info(f"Auto mode speed updated: base_speed={self.base_speed}")
+        return self.base_speed
+
     def _init_shared_camera(self) -> bool:
         try:
             self.camera = get_web_camera(self.robot.config)
             if not self.camera.is_running():
                 if not self.camera.start():
+                    logger.error("Camera failed to start for auto mode")
                     return False
             return True
         except Exception as e:
-            logger.error(f"Camera init error: {e}")
+            logger.error(f"Camera init error for auto mode: {e}")
             return False
 
     def _auto_loop(self):
@@ -758,6 +858,7 @@ class FollowModeController:
         self.FORWARD_SPEED_MIN = follow_config.get('forward_speed_min', 80)
         self.BACKWARD_SPEED = follow_config.get('backward_speed', 100)
         self.TURN_SPEED_MAX = follow_config.get('turn_speed_max', 160)
+        self.speed_limit = robot_controller.current_speed
 
         # ===== PID CONTROLLERS - Đọc từ config =====
         # PID cho điều khiển TRÁI/PHẢI (centering)
@@ -818,6 +919,12 @@ class FollowModeController:
         self.robot.driver.stop()
         logger.info("Follow mode stopped")
 
+    def set_speed(self, speed: int) -> int:
+        """Update follow mode runtime speed cap."""
+        self.speed_limit = self.robot._clamp_speed(speed)
+        logger.info(f"Follow mode speed limit updated: {self.speed_limit}")
+        return self.speed_limit
+
     def set_target_color(self, color: str):
         """Change target color"""
         if color in self.color_map:
@@ -867,10 +974,11 @@ class FollowModeController:
             self.camera = get_web_camera(self.robot.config)
             if not self.camera.is_running():
                 if not self.camera.start():
+                    logger.error("Camera failed to start for follow mode")
                     return False
             return True
         except Exception as e:
-            logger.error(f"Camera init error: {e}")
+            logger.error(f"Camera init error for follow mode: {e}")
             return False
 
     def _follow_loop(self):
@@ -928,6 +1036,8 @@ class FollowModeController:
                     # Error = target is on the RIGHT → need to turn RIGHT (positive error)
                     error_horizontal = self.target_x - center_x
                     turn_correction = self.pid_horizontal.compute(error_horizontal)
+                    turn_limit = min(self.TURN_SPEED_MAX, self.speed_limit)
+                    turn_correction = max(-turn_limit, min(turn_limit, turn_correction))
 
                     # ===== PID 2: DISTANCE (Forward/Backward) =====
                     # Error = object too small (far) → need to go FORWARD (negative error)
@@ -947,15 +1057,17 @@ class FollowModeController:
                         # Too small (too far) - move FORWARD
                         # Speed proportional to distance error
                         distance_error = self.TARGET_SIZE - obj_size
-                        base_speed = int(self.FORWARD_SPEED_MIN +
+                        forward_max = min(self.FORWARD_SPEED_MAX, self.speed_limit)
+                        forward_min = min(self.FORWARD_SPEED_MIN, forward_max)
+                        base_speed = int(forward_min +
                                        (distance_error / self.TARGET_SIZE) *
-                                       (self.FORWARD_SPEED_MAX - self.FORWARD_SPEED_MIN))
-                        base_speed = min(self.FORWARD_SPEED_MAX, base_speed)
+                                       (forward_max - forward_min))
+                        base_speed = min(forward_max, base_speed)
                         status = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) →"
 
                     else:
                         # Too large (too close) - move BACKWARD
-                        base_speed = -self.BACKWARD_SPEED
+                        base_speed = -min(self.BACKWARD_SPEED, self.speed_limit)
                         status = f"BACKING FROM {target['class_name']} ({obj_size:.0f}px) ←"
 
                     # 2. Calculate final motor speeds

@@ -6,7 +6,6 @@ let currentMode = 'idle'; // 'idle', 'auto', 'follow'
 let selectedMode = 'auto'; // Mode selected for the next START RUNNING command
 let startTime = Date.now();
 let selectedColor = 'red';
-let followDistance = 50;
 
 // Socket event handlers
 socket.on('connect', function () {
@@ -98,8 +97,11 @@ function updateSensorData(data) {
 
     // Update Line Position
     if (data.line_position !== undefined) {
-        document.getElementById('linePosition').textContent =
-            (data.line_position > 0 ? '+' : '') + data.line_position;
+        const linePosition = document.getElementById('linePosition');
+        if (linePosition) {
+            linePosition.textContent =
+                (data.line_position > 0 ? '+' : '') + data.line_position;
+        }
     }
 
 
@@ -372,6 +374,10 @@ function selectColor(color) {
     fetch('/set_follow_color?color=' + color)
         .then(response => response.json())
         .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to set target color');
+            }
+
             console.log('Target color set to:', color, data);
             addLogEntry(new Date().toLocaleTimeString(), 'INFO',
                 'Target color changed to: ' + color.toUpperCase());
@@ -386,6 +392,8 @@ function selectColor(color) {
         })
         .catch(error => {
             console.error('Error setting color:', error);
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
+                'Failed to set target color');
         });
 }
 
@@ -402,34 +410,19 @@ speedSlider.addEventListener('change', function () {
     fetch('/set_speed?value=' + speed)
         .then(response => response.json())
         .then(data => {
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to set speed');
+            }
+
             console.log('Speed set to:', speed, data);
+            const appliedSpeed = data.speed !== undefined ? data.speed : speed;
             addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-                'Speed adjusted to: ' + speed);
+                'Speed adjusted to: ' + appliedSpeed);
         })
         .catch(error => {
             console.error('Error setting speed:', error);
-        });
-});
-
-// ===== FOLLOW DISTANCE SLIDER =====
-const followDistanceSlider = document.getElementById('followDistanceSlider');
-const followDistanceDisplay = document.getElementById('followDistanceDisplay');
-
-followDistanceSlider.addEventListener('input', function () {
-    followDistanceDisplay.textContent = this.value + ' cm';
-});
-
-followDistanceSlider.addEventListener('change', function () {
-    followDistance = parseInt(this.value);
-    fetch('/set_follow_distance?distance=' + followDistance)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Follow distance set to:', followDistance, data);
-            addLogEntry(new Date().toLocaleTimeString(), 'INFO',
-                'Follow distance set to: ' + followDistance + ' cm');
-        })
-        .catch(error => {
-            console.error('Error setting follow distance:', error);
+            addLogEntry(new Date().toLocaleTimeString(), 'ERROR',
+                'Failed to adjust speed');
         });
 });
 

@@ -10,10 +10,12 @@ import cv2
 import numpy as np
 import threading
 import time
+from pathlib import Path
 
 # Import lane detector
 try:
     from perception.lane_detector import detect_line
+    from utils.config_loader import load_config
     from picamera2 import Picamera2
     CAMERA_AVAILABLE = True
 except ImportError as e:
@@ -31,18 +33,33 @@ lane_status = "NO_LANE"
 frame_lock = threading.Lock()
 
 # ===== LANE DETECTION PARAMETERS (Tunable) =====
-lane_params = {
-    'roi_top_ratio': 0.3,
+DEFAULT_LANE_PARAMS = {
+    'roi_top_ratio': 0.6,
     'roi_bottom_ratio': 1.0,
-    'roi_left_ratio': 0.20,      # ROI trái: 10% (mở rộng)
-    'roi_right_ratio': 0.80,     # ROI phải: 90% (mở rộng)
-    'canny_low': 100,
-    'canny_high': 200,
-    'hough_threshold': 90,
-    'min_line_length': 80,
-    'max_line_gap': 30,
-    'blur_kernel': 9,
+    'roi_left_ratio': 0.10,
+    'roi_right_ratio': 0.90,
+    'canny_low': 80,
+    'canny_high': 185,
+    'hough_threshold': 40,
+    'min_line_length': 50,
+    'max_line_gap': 25,
+    'blur_kernel': 7,
 }
+
+
+def load_default_lane_params():
+    """Load lane defaults from the main robot config, with safe fallbacks."""
+    params = DEFAULT_LANE_PARAMS.copy()
+    try:
+        config_path = Path(__file__).resolve().parent / "config" / "hardware_config.yaml"
+        config = load_config(str(config_path))
+        params.update(config.get('ai', {}).get('lane_detection', {}))
+    except Exception as e:
+        print(f"⚠️  Không load được hardware_config.yaml, dùng mặc định dashboard: {e}")
+    return params
+
+
+lane_params = load_default_lane_params()
 
 # Parameter ranges for UI sliders
 PARAM_RANGES = {
@@ -57,6 +74,41 @@ PARAM_RANGES = {
     'max_line_gap': {'min': 5, 'max': 80, 'step': 5},
     'blur_kernel': {'min': 1, 'max': 15, 'step': 2},
 }
+
+
+def validate_lane_param(name, value):
+    """Validate and normalize one lane tuning parameter."""
+    if name not in PARAM_RANGES:
+        raise ValueError("Invalid parameter")
+
+    if isinstance(value, bool):
+        raise ValueError("Parameter value must be numeric")
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Parameter value must be numeric")
+
+    if not np.isfinite(numeric_value):
+        raise ValueError("Parameter value must be finite")
+
+    param_range = PARAM_RANGES[name]
+    numeric_value = max(param_range['min'], min(param_range['max'], numeric_value))
+
+    if name.startswith('roi_'):
+        return float(numeric_value)
+
+    int_value = int(round(numeric_value))
+
+    if name == 'blur_kernel':
+        int_value = max(param_range['min'], min(param_range['max'], int_value))
+        if int_value % 2 == 0:
+            int_value += 1
+        if int_value > param_range['max']:
+            int_value -= 2
+        return int_value
+
+    return max(param_range['min'], min(param_range['max'], int_value))
 
 # HTML Template with embedded CSS/JS
 HTML_TEMPLATE = """
@@ -309,33 +361,33 @@ HTML_TEMPLATE = """
                 <div class="param-group">
                     <label>
                         <span class="param-name">roi_top_ratio</span>
-                        <span class="param-value" id="val-roi_top_ratio">0.15</span>
+                        <span class="param-value" id="val-roi_top_ratio">{{ lane_params.roi_top_ratio }}</span>
                     </label>
-                    <input type="range" id="roi_top_ratio" min="0" max="0.8" step="0.05" value="0.15">
+                    <input type="range" id="roi_top_ratio" min="0" max="0.8" step="0.05" value="{{ lane_params.roi_top_ratio }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">roi_bottom_ratio</span>
-                        <span class="param-value" id="val-roi_bottom_ratio">1.0</span>
+                        <span class="param-value" id="val-roi_bottom_ratio">{{ lane_params.roi_bottom_ratio }}</span>
                     </label>
-                    <input type="range" id="roi_bottom_ratio" min="0.5" max="1.0" step="0.05" value="1.0">
+                    <input type="range" id="roi_bottom_ratio" min="0.5" max="1.0" step="0.05" value="{{ lane_params.roi_bottom_ratio }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">roi_left_ratio</span>
-                        <span class="param-value" id="val-roi_left_ratio">0.10</span>
+                        <span class="param-value" id="val-roi_left_ratio">{{ lane_params.roi_left_ratio }}</span>
                     </label>
-                    <input type="range" id="roi_left_ratio" min="0.0" max="0.4" step="0.05" value="0.10">
+                    <input type="range" id="roi_left_ratio" min="0.0" max="0.4" step="0.05" value="{{ lane_params.roi_left_ratio }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">roi_right_ratio</span>
-                        <span class="param-value" id="val-roi_right_ratio">0.90</span>
+                        <span class="param-value" id="val-roi_right_ratio">{{ lane_params.roi_right_ratio }}</span>
                     </label>
-                    <input type="range" id="roi_right_ratio" min="0.6" max="1.0" step="0.05" value="0.90">
+                    <input type="range" id="roi_right_ratio" min="0.6" max="1.0" step="0.05" value="{{ lane_params.roi_right_ratio }}">
                 </div>
                 
                 <div class="section-title">🔍 Canny Edge Detection</div>
@@ -343,17 +395,17 @@ HTML_TEMPLATE = """
                 <div class="param-group">
                     <label>
                         <span class="param-name">canny_low</span>
-                        <span class="param-value" id="val-canny_low">65</span>
+                        <span class="param-value" id="val-canny_low">{{ lane_params.canny_low }}</span>
                     </label>
-                    <input type="range" id="canny_low" min="10" max="150" step="5" value="65">
+                    <input type="range" id="canny_low" min="10" max="150" step="5" value="{{ lane_params.canny_low }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">canny_high</span>
-                        <span class="param-value" id="val-canny_high">165</span>
+                        <span class="param-value" id="val-canny_high">{{ lane_params.canny_high }}</span>
                     </label>
-                    <input type="range" id="canny_high" min="50" max="300" step="5" value="165">
+                    <input type="range" id="canny_high" min="50" max="300" step="5" value="{{ lane_params.canny_high }}">
                 </div>
                 
                 <div class="section-title">📏 Hough Transform</div>
@@ -361,25 +413,25 @@ HTML_TEMPLATE = """
                 <div class="param-group">
                     <label>
                         <span class="param-name">hough_threshold</span>
-                        <span class="param-value" id="val-hough_threshold">40</span>
+                        <span class="param-value" id="val-hough_threshold">{{ lane_params.hough_threshold }}</span>
                     </label>
-                    <input type="range" id="hough_threshold" min="10" max="100" step="5" value="40">
+                    <input type="range" id="hough_threshold" min="10" max="100" step="5" value="{{ lane_params.hough_threshold }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">min_line_length</span>
-                        <span class="param-value" id="val-min_line_length">50</span>
+                        <span class="param-value" id="val-min_line_length">{{ lane_params.min_line_length }}</span>
                     </label>
-                    <input type="range" id="min_line_length" min="10" max="100" step="5" value="50">
+                    <input type="range" id="min_line_length" min="10" max="100" step="5" value="{{ lane_params.min_line_length }}">
                 </div>
                 
                 <div class="param-group">
                     <label>
                         <span class="param-name">max_line_gap</span>
-                        <span class="param-value" id="val-max_line_gap">35</span>
+                        <span class="param-value" id="val-max_line_gap">{{ lane_params.max_line_gap }}</span>
                     </label>
-                    <input type="range" id="max_line_gap" min="5" max="80" step="5" value="35">
+                    <input type="range" id="max_line_gap" min="5" max="80" step="5" value="{{ lane_params.max_line_gap }}">
                 </div>
                 
                 <div class="section-title">🌫️ Preprocessing</div>
@@ -387,9 +439,9 @@ HTML_TEMPLATE = """
                 <div class="param-group">
                     <label>
                         <span class="param-name">blur_kernel</span>
-                        <span class="param-value" id="val-blur_kernel">5</span>
+                        <span class="param-value" id="val-blur_kernel">{{ lane_params.blur_kernel }}</span>
                     </label>
-                    <input type="range" id="blur_kernel" min="1" max="15" step="2" value="5">
+                    <input type="range" id="blur_kernel" min="1" max="15" step="2" value="{{ lane_params.blur_kernel }}">
                 </div>
                 
                 <div class="controls">
@@ -408,18 +460,7 @@ HTML_TEMPLATE = """
     
     <script>
         // Default parameters
-        const defaultParams = {
-            roi_top_ratio: 0.15,
-            roi_bottom_ratio: 1.0,
-            roi_left_ratio: 0.10,
-            roi_right_ratio: 0.90,
-            canny_low: 65,
-            canny_high: 165,
-            hough_threshold: 40,
-            min_line_length: 50,
-            max_line_gap: 35,
-            blur_kernel: 5
-        };
+        const defaultParams = {{ lane_params | tojson }};
         
         // Initialize sliders
         const paramNames = Object.keys(defaultParams);
@@ -567,6 +608,62 @@ HTML_TEMPLATE = """
 """
 
 
+def classify_lane_status(error):
+    """Return a dashboard-friendly status from the detector error value."""
+    if error == 999:
+        return "NO_LANE"
+    if error > 20:
+        return "OFFSET_RIGHT"
+    if error < -20:
+        return "OFFSET_LEFT"
+    return "CENTERED"
+
+
+def draw_dashboard_overlay(frame, x_line, center_x, error, params):
+    """Draw ROI, center line, detected target line, and current error."""
+    if frame is None:
+        return None
+
+    output = frame.copy()
+    height, width = output.shape[:2]
+
+    roi_top = int(height * params.get('roi_top_ratio', 0.6))
+    roi_bottom = int(height * params.get('roi_bottom_ratio', 1.0))
+    roi_left = int(width * params.get('roi_left_ratio', 0.1))
+    roi_right = int(width * params.get('roi_right_ratio', 0.9))
+    roi_vertices = np.array([[
+        (0, roi_bottom),
+        (roi_left, roi_top),
+        (roi_right, roi_top),
+        (width, roi_bottom),
+    ]], dtype=np.int32)
+
+    cv2.polylines(output, roi_vertices, True, (255, 0, 0), 2)
+    cv2.line(output, (center_x, 0), (center_x, height), (0, 255, 255), 2)
+
+    status = classify_lane_status(error)
+    if error != 999:
+        cv2.line(output, (x_line, 0), (x_line, height), (255, 0, 255), 3)
+        cv2.arrowedLine(
+            output,
+            (center_x, height - 45),
+            (x_line, height - 45),
+            (0, 0, 255),
+            3,
+        )
+
+    cv2.putText(
+        output,
+        f"Error: {error:+d}px | {status}",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0) if error != 999 else (0, 0, 255),
+        2,
+    )
+    return output
+
+
 def camera_thread():
     """
     Camera capture thread - Chạy liên tục trong background
@@ -600,30 +697,22 @@ def camera_thread():
         while True:
             # Capture frame (YUV420 planar format)
             frame_yuv = picam2.capture_array()
-            
-            # ============================================================
-            # ✅ FIX: Convert YUV420 → BGR (consistent với camera_manager)
-            # ============================================================
-            frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_YUV420p2BGR)
-            
-            # Detect lane with current parameters
-            error, x_line, center_x, debug_frame = detect_line(frame_bgr, lane_params)
+
+            # Detect lane on raw YUV420 so the detector can use the Y channel directly.
+            # debug=True asks for a BGR frame only for browser visualization.
+            error, x_line, center_x, debug_frame = detect_line(
+                frame_yuv, lane_params, debug=True
+            )
+            debug_frame = draw_dashboard_overlay(
+                debug_frame, x_line, center_x, error, lane_params
+            )
             
             # Update global variables
             with frame_lock:
-                current_frame = frame_bgr
+                current_frame = frame_yuv
                 current_debug_frame = debug_frame
                 current_error = error
-                
-                # Determine lane status
-                if x_line == center_x:
-                    lane_status = "NO_LANE"
-                elif error > 20:
-                    lane_status = "RIGHT_ONLY"
-                elif error < -20:
-                    lane_status = "LEFT_ONLY"
-                else:
-                    lane_status = "BOTH_LANES"
+                lane_status = classify_lane_status(error)
             
             time.sleep(0.03)  # ~30 FPS
             
@@ -651,7 +740,7 @@ def generate_frames():
 @app.route('/')
 def index():
     """Main dashboard page"""
-    return render_template_string(HTML_TEMPLATE)
+    return render_template_string(HTML_TEMPLATE, lane_params=lane_params)
 
 
 @app.route('/video_feed')
@@ -683,21 +772,21 @@ def get_params():
 def update_param():
     """Update a single parameter"""
     global lane_params
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'status': 'error', 'message': 'Invalid JSON payload'}), 400
+
     name = data.get('name')
     value = data.get('value')
-    
-    if name in lane_params:
-        # Ensure blur_kernel is odd
-        if name == 'blur_kernel':
-            value = int(value)
-            if value % 2 == 0:
-                value += 1
-        lane_params[name] = value
-        print(f"📝 Updated {name} = {value}")
-        return jsonify({'status': 'ok'})
-    
-    return jsonify({'status': 'error', 'message': 'Invalid parameter'}), 400
+
+    try:
+        value = validate_lane_param(name, value)
+    except ValueError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    lane_params[name] = value
+    print(f"📝 Updated {name} = {value}")
+    return jsonify({'status': 'ok', 'name': name, 'value': value})
 
 
 @app.route('/save_params', methods=['POST'])

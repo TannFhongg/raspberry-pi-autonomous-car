@@ -1,5 +1,5 @@
 """
-Lane Detection Module - FIXED for 1640x1232 → 640x480 resize
+Lane Detection Module - resolution-aware frame processing
 OPTIMIZED for BLACK LINES on WHITE BACKGROUND
 Designed for: 38cm lane width, 15cm robot width, black tape lines
 Camera: Raspberry Pi Camera Module 2
@@ -12,6 +12,216 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_LANE_CONFIG = {
+    'roi_top_ratio': 0.6,
+    'roi_bottom_ratio': 1.0,
+    'roi_left_ratio': 0.1,
+    'roi_right_ratio': 0.9,
+    'canny_low': 80,
+    'canny_high': 185,
+    'hough_threshold': 45,
+    'min_line_length': 60,
+    'max_line_gap': 30,
+    'blur_kernel': 7,
+    'lane_width_pixels': 457,
+    'camera_offset': -15,
+}
+
+
+def _finite_number(value, default, name):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        logger.warning(f"Invalid lane config {name}={value!r}; using {default}")
+        return default
+
+    if not np.isfinite(number):
+        logger.warning(f"Non-finite lane config {name}={value!r}; using {default}")
+        return default
+
+    return number
+
+
+def _clamp_float(value, default, minimum, maximum, name):
+    number = _finite_number(value, default, name)
+    return max(minimum, min(maximum, float(number)))
+
+
+def _clamp_int(value, default, minimum, maximum, name):
+    number = _finite_number(value, default, name)
+    return max(minimum, min(maximum, int(round(number))))
+
+
+def _normalize_blur_kernel(value, default=7):
+    kernel = _clamp_int(value, default, 1, 99, 'blur_kernel')
+    if kernel % 2 == 0:
+        kernel += 1
+    return kernel
+
+
+def normalize_lane_config(config=None):
+    """Return lane detection config with safe numeric values."""
+    merged = DEFAULT_LANE_CONFIG.copy()
+    if config:
+        merged.update(config)
+
+    normalized = {
+        'roi_top_ratio': _clamp_float(
+            merged.get('roi_top_ratio'),
+            DEFAULT_LANE_CONFIG['roi_top_ratio'],
+            0.0,
+            0.99,
+            'roi_top_ratio',
+        ),
+        'roi_bottom_ratio': _clamp_float(
+            merged.get('roi_bottom_ratio'),
+            DEFAULT_LANE_CONFIG['roi_bottom_ratio'],
+            0.01,
+            1.0,
+            'roi_bottom_ratio',
+        ),
+        'roi_left_ratio': _clamp_float(
+            merged.get('roi_left_ratio'),
+            DEFAULT_LANE_CONFIG['roi_left_ratio'],
+            0.0,
+            0.99,
+            'roi_left_ratio',
+        ),
+        'roi_right_ratio': _clamp_float(
+            merged.get('roi_right_ratio'),
+            DEFAULT_LANE_CONFIG['roi_right_ratio'],
+            0.01,
+            1.0,
+            'roi_right_ratio',
+        ),
+        'canny_low': _clamp_int(
+            merged.get('canny_low'), DEFAULT_LANE_CONFIG['canny_low'], 0, 1000, 'canny_low'
+        ),
+        'canny_high': _clamp_int(
+            merged.get('canny_high'), DEFAULT_LANE_CONFIG['canny_high'], 0, 1000, 'canny_high'
+        ),
+        'hough_threshold': _clamp_int(
+            merged.get('hough_threshold'),
+            DEFAULT_LANE_CONFIG['hough_threshold'],
+            1,
+            1000,
+            'hough_threshold',
+        ),
+        'min_line_length': _clamp_int(
+            merged.get('min_line_length'),
+            DEFAULT_LANE_CONFIG['min_line_length'],
+            1,
+            10000,
+            'min_line_length',
+        ),
+        'max_line_gap': _clamp_int(
+            merged.get('max_line_gap'),
+            DEFAULT_LANE_CONFIG['max_line_gap'],
+            0,
+            10000,
+            'max_line_gap',
+        ),
+        'blur_kernel': _normalize_blur_kernel(
+            merged.get('blur_kernel'), DEFAULT_LANE_CONFIG['blur_kernel']
+        ),
+        'lane_width_pixels': _clamp_int(
+            merged.get('lane_width_pixels'),
+            DEFAULT_LANE_CONFIG['lane_width_pixels'],
+            1,
+            10000,
+            'lane_width_pixels',
+        ),
+        'camera_offset': _clamp_int(
+            merged.get('camera_offset'),
+            DEFAULT_LANE_CONFIG['camera_offset'],
+            -10000,
+            10000,
+            'camera_offset',
+        ),
+    }
+
+    if normalized['roi_bottom_ratio'] <= normalized['roi_top_ratio']:
+        logger.warning(
+            "Invalid ROI vertical range: top=%s bottom=%s; using defaults",
+            normalized['roi_top_ratio'],
+            normalized['roi_bottom_ratio'],
+        )
+        normalized['roi_top_ratio'] = DEFAULT_LANE_CONFIG['roi_top_ratio']
+        normalized['roi_bottom_ratio'] = DEFAULT_LANE_CONFIG['roi_bottom_ratio']
+
+    if normalized['roi_right_ratio'] <= normalized['roi_left_ratio']:
+        logger.warning(
+            "Invalid ROI horizontal range: left=%s right=%s; using defaults",
+            normalized['roi_left_ratio'],
+            normalized['roi_right_ratio'],
+        )
+        normalized['roi_left_ratio'] = DEFAULT_LANE_CONFIG['roi_left_ratio']
+        normalized['roi_right_ratio'] = DEFAULT_LANE_CONFIG['roi_right_ratio']
+
+    if normalized['canny_high'] < normalized['canny_low']:
+        logger.warning(
+            "Canny high threshold lower than low threshold; swapping %s/%s",
+            normalized['canny_low'],
+            normalized['canny_high'],
+        )
+        normalized['canny_low'], normalized['canny_high'] = (
+            normalized['canny_high'],
+            normalized['canny_low'],
+        )
+
+    return normalized
+
+
+def _looks_like_yuv420_shape(height, width):
+    if height <= 0 or width <= 0:
+        return False
+    if height % 3 != 0 or width % 2 != 0:
+        return False
+
+    image_height = (height * 2) // 3
+    if image_height <= 0 or image_height % 2 != 0:
+        return False
+
+    aspect_ratio = image_height / float(width)
+    return 0.55 <= aspect_ratio <= 1.8
+
+
+def _extract_gray_frame(frame, debug=False, context="detect_line"):
+    """
+    Extract grayscale from YUV420/BGR/grayscale input without assuming resolution.
+    """
+    if frame is None or not hasattr(frame, "shape"):
+        logger.error(f"Unexpected frame in {context}: {type(frame)!r}")
+        return None, None
+
+    if len(frame.shape) == 2:
+        height, width = frame.shape[:2]
+        if _looks_like_yuv420_shape(height, width):
+            image_height = (height * 2) // 3
+            gray = frame[:image_height, :].copy()
+            frame_color = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420) if debug else None
+            logger.debug(
+                "Extracted Y channel from YUV420 frame: raw=%s gray=%s",
+                frame.shape,
+                gray.shape,
+            )
+            return gray, frame_color
+
+        gray = frame.copy()
+        frame_color = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) if debug else None
+        logger.debug("Using 2D grayscale frame: shape=%s", frame.shape)
+        return gray, frame_color
+
+    if len(frame.shape) == 3 and frame.shape[2] == 3:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame_color = frame.copy() if debug else None
+        logger.debug("Converted BGR frame to grayscale: shape=%s", frame.shape)
+        return gray, frame_color
+
+    logger.error(f"Unexpected frame format in {context}: shape={frame.shape}")
+    return None, None
+
+
 def detect_line(frame, config=None, debug=False):
     """
     Phát hiện vạch KẺ ĐEN trên nền TRẮNG (bìa trắng)
@@ -20,7 +230,7 @@ def detect_line(frame, config=None, debug=False):
     Thông số thực tế:
     - Lane width: 38cm
     - Robot width: 15cm
-    - Input: RAW YUV420 640x720 từ camera_manager (ISP hardware output)
+    - Input: RAW YUV420 từ camera_manager (ISP hardware output)
     - Line color: BLACK on WHITE background
 
     Args:
@@ -32,75 +242,18 @@ def detect_line(frame, config=None, debug=False):
         (error, x_line, center_x, debug_frame or None)
     """
 
-    # ============================================================
-    # BƯỚC 0: XỬ LÝ FORMAT - LẤY KÊNH Y (GRAYSCALE) TỪ YUV420
-    # ============================================================
-    # ✅ OPTIMIZED: YUV420 format từ ISP
-    # - Shape: (H*3//2, W) = (720, 640) cho 640x480 resolution
-    # - Layout: Y plane (480×640) + U plane (240×320) + V plane (240×320)
-    # - Kênh Y = Grayscale MIỄN PHÍ từ ISP (không tốn CPU)
+    config = normalize_lane_config(config)
+    gray, frame_color = _extract_gray_frame(frame, debug=debug, context="detect_line")
+    if gray is None:
+        return 999, 0, 0, None
 
-    height, width = frame.shape[:2]
-
-    frame_color = None
-
-    # Detect format và extract grayscale
-    if len(frame.shape) == 2:
-        # YUV420 planar format: shape = (H*3//2, W)
-        if height == 720 and width == 640:
-            # Extract Y channel (first 480 rows)
-            gray = frame[:480, :].copy()
-            if debug:
-                frame_color = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
-            logger.debug("✅ OPTIMIZED: Extracted Y channel from YUV420 (CPU cost = 0)")
-        else:
-            # Unknown 2D format - assume grayscale
-            gray = frame
-            if debug:
-                frame_color = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            logger.warning(f"Unexpected 2D frame size: {frame.shape}, assuming grayscale")
-    elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        # BGR format (fallback for testing or if camera_manager changed)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        if debug:
-            frame_color = frame.copy()
-        logger.warning("⚠️ Received BGR frame, converting to grayscale (CPU overhead!)")
-    else:
-        # Unknown format - log error
-        logger.error(f"Unexpected frame format: shape={frame.shape}")
-        # Return safe defaults
-        return 999, width // 2, width // 2, frame
-
-    # Đảm bảo kích thước đúng 640x480
-    if gray.shape != (480, 640):
-        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
-        logger.warning(f"Frame không phải 640x480, đã resize: {gray.shape}")
-
-    if frame_color is not None and frame_color.shape[:2] != (480, 640):
-        frame_color = cv2.resize(frame_color, (640, 480), interpolation=cv2.INTER_AREA)
-
-    height, width = 480, 640  # Cố định
+    height, width = gray.shape[:2]
     center_x = width // 2
 
     # ============================================================
-    # Cấu hình mặc định - TUNED cho vạch đen trên nền trắng
+    # LANE WIDTH PIXELS - Đọc từ config/calibration
     # ============================================================
-    if config is None:
-        config = {
-            'roi_top_ratio': 0.6,      # BẮT ĐẦU THẤP HƠN (35% thay vì 40%) - Nhìn GẦN XE HƠN
-            'roi_bottom_ratio': 1.0,
-            'canny_low': 80,             # TĂNG lên 40 (nền trắng sạch, cần ngưỡng cao hơn)
-            'canny_high': 185,           # TĂNG lên 120
-            'hough_threshold': 45,       # TĂNG lên 20 (vạch rõ hơn trên nền trắng)
-            'min_line_length': 60,       # TĂNG lên 30 (loại nhiễu)
-            'max_line_gap': 30,          # TĂNG lên 20
-            'blur_kernel': 7,            # GIẢM về 5 (nền trắng ít nhiễu hơn nền nhà)
-        }
-
-    # ============================================================
-    # LANE WIDTH PIXELS - ĐÃ CALIBRATE CHO 640x480
-    # ============================================================
-    LANE_WIDTH_PIXELS = 457  # ⚠️ GIÁ TRỊ ƯỚC TÍNH - PHẢI CALIBRATE!
+    lane_width_pixels = config['lane_width_pixels']
 
     # ============================================================
     # 1. TIỀN XỬ LÝ ẢNH - CHO NỀN TRẮNG, VẠCH ĐEN
@@ -126,10 +279,12 @@ def detect_line(frame, config=None, debug=False):
     roi_bottom = int(height * config['roi_bottom_ratio'])
 
     # Mở rộng ROI (30%-70% thay vì 35%-65%) - Bắt vạch ở 2 bên tốt hơn
+    roi_left = int(width * config['roi_left_ratio'])
+    roi_right = int(width * config['roi_right_ratio'])
     roi_vertices = np.array([[
         (0, roi_bottom),
-        (int(width * 0.2), roi_top),  # MỞ RỘNG: 30% thay vì 35%
-        (int(width * 0.8), roi_top),  # MỞ RỘNG: 70% thay vì 65%
+        (roi_left, roi_top),
+        (roi_right, roi_top),
         (width, roi_bottom)
     ]], dtype=np.int32)
 
@@ -220,12 +375,12 @@ def detect_line(frame, config=None, debug=False):
 
     elif left_lane_x is not None:
         # CASE 2: Chỉ thấy TRÁI
-        x_line = left_lane_x + (LANE_WIDTH_PIXELS // 2)
+        x_line = left_lane_x + (lane_width_pixels // 2)
         lane_status = "LEFT_ONLY"
 
     elif right_lane_x is not None:
         # CASE 3: Chỉ thấy PHẢI
-        x_line = right_lane_x - (LANE_WIDTH_PIXELS // 2)
+        x_line = right_lane_x - (lane_width_pixels // 2)
         lane_status = "RIGHT_ONLY"
 
     else:
@@ -236,16 +391,16 @@ def detect_line(frame, config=None, debug=False):
     # ============================================================
     # 7. TÍNH SAI SỐ
     # ============================================================
-    CAMERA_OFFSET = -15  # Hiệu chỉnh nếu camera không đặt chính giữa robot
+    camera_offset = config['camera_offset']  # Hiệu chỉnh nếu camera không đặt chính giữa robot
     if lane_status == "NO_LANE":
         error = 999  # ⚠️ QUAN TRỌNG: Gán cứng lỗi 999 khi mất line
     else:
-        error = x_line - center_x + CAMERA_OFFSET  # Các trường hợp còn lại tính toán bình thường
+        error = x_line - center_x + camera_offset  # Các trường hợp còn lại tính toán bình thường
 
     return error, x_line, center_x, frame_color
 
 
-def detect_line_black_adaptive(frame, debug=False):
+def detect_line_black_adaptive(frame, debug=False, config=None):
     """
     Phương pháp dự phòng: ADAPTIVE THRESHOLD
     Tốt hơn khi ánh sáng không đều hoặc Hough thất bại
@@ -258,41 +413,22 @@ def detect_line_black_adaptive(frame, debug=False):
     Returns:
         (error, x_line, center_x, debug_frame or None)
     """
-    # ============================================================
-    # XỬ LÝ FORMAT - LẤY KÊNH Y TỪ YUV420
-    # ============================================================
-    height, width = frame.shape[:2]
+    if isinstance(debug, dict) and config is None:
+        config = debug
+        debug = False
 
-    # Detect format và extract grayscale
-    if len(frame.shape) == 2:
-        # YUV420 planar format
-        if height == 720 and width == 640:
-            gray = frame[:480, :].copy()
-        else:
-            gray = frame
-    elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        # BGR fallback
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        logger.warning("⚠️ Adaptive: Received BGR, converting (CPU overhead!)")
-    else:
-        logger.error(f"Unexpected frame format in adaptive: shape={frame.shape}")
-        return 999, width // 2, width // 2, frame
+    config = normalize_lane_config(config)
+    gray, frame_debug = _extract_gray_frame(frame, debug=debug, context="adaptive")
+    if gray is None:
+        return 999, 0, 0, None
 
-    # Đảm bảo 640x480
-    if gray.shape != (480, 640):
-        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
-
-    height, width = 480, 640
+    height, width = gray.shape[:2]
     center_x = width // 2
-    LANE_WIDTH_PIXELS = 457  # Cùng giá trị với detect_line()
-
-    # Debug frame (only if debug=True)
-    frame_debug = None
-    if debug:
-        frame_debug = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    lane_width_pixels = config['lane_width_pixels']
 
     # Làm mờ
-    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    blur_kernel = config['blur_kernel']
+    blur = cv2.GaussianBlur(gray, (blur_kernel, blur_kernel), 0)
 
     # ADAPTIVE THRESHOLD - Vạch đen thành trắng
     thresh = cv2.adaptiveThreshold(
@@ -342,9 +478,9 @@ def detect_line_black_adaptive(frame, debug=False):
 
             # Dự đoán: Nếu contour ở bên trái → thêm nửa lane width
             if cx < center_x:
-                x_line = cx + (LANE_WIDTH_PIXELS // 2)
+                x_line = cx + (lane_width_pixels // 2)
             else:
-                x_line = cx - (LANE_WIDTH_PIXELS // 2)
+                x_line = cx - (lane_width_pixels // 2)
         else:
             x_line = center_x
     else:
@@ -361,31 +497,11 @@ def calibrate_lane_width(frame, show_result=False):
     ✅ OPTIMIZED: Nhận RAW YUV420, lấy trực tiếp kênh Y
     Đã sửa: KHÔNG dùng cv2.imshow() (không có màn hình)
     """
-    # ============================================================
-    # XỬ LÝ FORMAT - LẤY KÊNH Y TỪ YUV420
-    # ============================================================
-    height, width = frame.shape[:2]
-
-    # Detect format và extract grayscale
-    if len(frame.shape) == 2:
-        # YUV420 planar format
-        if height == 720 and width == 640:
-            gray = frame[:480, :].copy()
-        else:
-            gray = frame
-    elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        # BGR fallback
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        logger.warning("⚠️ Calibrate: Received BGR, converting (CPU overhead!)")
-    else:
-        logger.error(f"Unexpected frame format in calibrate: shape={frame.shape}")
+    gray, _ = _extract_gray_frame(frame, debug=False, context="calibrate")
+    if gray is None:
         return None
 
-    # Đảm bảo 640x480
-    if gray.shape != (480, 640):
-        gray = cv2.resize(gray, (640, 480), interpolation=cv2.INTER_AREA)
-
-    height, width = 480, 640
+    height, width = gray.shape[:2]
 
     gray_inv = cv2.bitwise_not(gray)
     edges = cv2.Canny(gray_inv, 40, 120)
@@ -415,8 +531,8 @@ def calibrate_lane_width(frame, show_result=False):
             print(f"  Scale Factor:       {38 / lane_width_pixels:.4f} cm/px")
             print(f"{'='*60}\n")
             print(f"⚠️  CẬP NHẬT NGAY:")
-            print(f"  Sửa dòng 53 trong lane_detector.py:")
-            print(f"  LANE_WIDTH_PIXELS = {lane_width_pixels}")
+            print(f"  config/hardware_config.yaml:")
+            print(f"  ai.lane_detection.lane_width_pixels: {lane_width_pixels}")
             print(f"{'='*60}\n")
 
             return lane_width_pixels

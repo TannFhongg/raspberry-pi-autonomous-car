@@ -89,6 +89,11 @@
                         </div>
                     </div>
 
+                    <div class="status-item">
+                        <div class="status-label">Line Position</div>
+                        <div class="status-value" id="linePosition">0</div>
+                    </div>
+
                     <!-- NEW: Target Distance -->
                     <div class="status-item" id="targetDistanceItem" style="display: none;">
                         <div class="status-label">
@@ -181,17 +186,7 @@
                                         onclick="selectColor('blue')"></button>
                                     <button class="color-btn color-yellow" data-color="yellow"
                                         onclick="selectColor('yellow')"></button>
-                                    <button class="color-btn color-orange" data-color="orange"
-                                        onclick="selectColor('orange')"></button>
                                 </div>
-                            </div>
-
-                            <!-- Follow Distance -->
-                            <div class="control-item">
-                                <label><i class="fas fa-ruler"></i> Follow Distance:</label>
-                                <input type="range" class="distance-slider" id="followDistanceSlider" min="20" max="100"
-                                    value="50">
-                                <span class="distance-display" id="followDistanceDisplay">50 cm</span>
                             </div>
                         </div>
 
