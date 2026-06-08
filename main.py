@@ -241,12 +241,12 @@ def debug_feed():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 
                 # Encode to JPEG
-                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ret:
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
-                time.sleep(0.02)  # ~20 FPS
+                time.sleep(0.033)  # ~30 FPS
 
             except Exception as e:
                 logger.error(f"Debug feed error: {e}")

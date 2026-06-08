@@ -34,7 +34,7 @@ sensors:
     picamera2:
       format: 'YUV420'        # YUV420: Y channel = Grayscale miễn phí
                               # Tiết kiệm băng thông và CPU so với RGB888
-      buffer_count: 4         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
+      buffer_count: 6         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
       
       # Camera controls - Điều chỉnh chất lượng ảnh
       controls:
