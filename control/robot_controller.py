@@ -585,6 +585,7 @@ class AutoModeController:
                             self.approaching_turn_sign = False
                             self.turn_sign_direction = None
                             self.robot.smart_turn(80, speed=200)
+                            self.last_time = None # ✅ THÊM DÒNG NÀY (Reset rác thời gian)
                             self.pid.reset()
                             continue
 
@@ -594,6 +595,7 @@ class AutoModeController:
                             self.approaching_turn_sign = False
                             self.turn_sign_direction = None
                             self.robot.smart_turn(-80, speed=200)
+                            self.last_time = None # ✅ THÊM DÒNG NÀY (Reset rác thời gian)
                             self.pid.reset()
                             continue
 
@@ -859,6 +861,7 @@ class FollowModeController:
         self.BACKWARD_SPEED = follow_config.get('backward_speed', 100)
         self.TURN_SPEED_MAX = follow_config.get('turn_speed_max', 160)
         self.speed_limit = robot_controller.current_speed
+        self.last_time = None  # Track real time between PID updates
 
         # ===== PID CONTROLLERS - Đọc từ config =====
         # PID cho điều khiển TRÁI/PHẢI (centering)
@@ -903,6 +906,7 @@ class FollowModeController:
 
             self.pid_horizontal.reset()
             self.pid_distance.reset()
+            self.last_time = None
 
             self.running = True
             self.thread = threading.Thread(target=self._follow_loop, daemon=True)
@@ -1031,19 +1035,28 @@ class FollowModeController:
                     # Object size (max dimension)
                     obj_size = max(self.target_w, self.target_h)
 
+                    # ===== DYNAMIC dt FOR BOTH FOLLOW PID CONTROLLERS =====
+                    current_time = time.time()
+                    if self.last_time is None:
+                        dt = 0.05  # First follow frame, matches the loop sleep below
+                    else:
+                        dt = current_time - self.last_time
+                        dt = max(0.01, min(0.2, dt))
+                    self.last_time = current_time
+
                     # ===== PID 1: HORIZONTAL (Left/Right Centering) =====
                     # Error = target is on the LEFT → need to turn LEFT (negative error)
                     # Error = target is on the RIGHT → need to turn RIGHT (positive error)
                     error_horizontal = self.target_x - center_x
-                    turn_correction = self.pid_horizontal.compute(error_horizontal)
+                    turn_correction = self.pid_horizontal.compute(error_horizontal, dt)
                     turn_limit = min(self.TURN_SPEED_MAX, self.speed_limit)
                     turn_correction = max(-turn_limit, min(turn_limit, turn_correction))
 
                     # ===== PID 2: DISTANCE (Forward/Backward) =====
-                    # Error = object too small (far) → need to go FORWARD (negative error)
-                    # Error = object too large (close) → need to go BACKWARD (positive error)
-                    error_distance = obj_size - self.TARGET_SIZE
-                    distance_correction = self.pid_distance.compute(error_distance)
+                    # Error = object too small (far) → need to go FORWARD (positive error)
+                    # Error = object too large (close) → need to go BACKWARD (negative error)
+                    error_distance = self.TARGET_SIZE - obj_size
+                    distance_correction = self.pid_distance.compute(error_distance, dt)
 
                     # ===== DETERMINE MOTION =====
 
@@ -1054,20 +1067,15 @@ class FollowModeController:
                         status = f"LOCKED ON {target['class_name']} ({obj_size:.0f}px) ✓"
 
                     elif obj_size < self.SIZE_MIN:
-                        # Too small (too far) - move FORWARD
-                        # Speed proportional to distance error
-                        distance_error = self.TARGET_SIZE - obj_size
+                        # Too small (too far) - move FORWARD using PID distance output
                         forward_max = min(self.FORWARD_SPEED_MAX, self.speed_limit)
-                        forward_min = min(self.FORWARD_SPEED_MIN, forward_max)
-                        base_speed = int(forward_min +
-                                       (distance_error / self.TARGET_SIZE) *
-                                       (forward_max - forward_min))
-                        base_speed = min(forward_max, base_speed)
+                        base_speed = int(max(0, min(forward_max, distance_correction)))
                         status = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) →"
 
                     else:
-                        # Too large (too close) - move BACKWARD
-                        base_speed = -min(self.BACKWARD_SPEED, self.speed_limit)
+                        # Too large (too close) - move BACKWARD using PID distance output
+                        backward_max = min(self.BACKWARD_SPEED, self.speed_limit)
+                        base_speed = int(min(0, max(-backward_max, distance_correction)))
                         status = f"BACKING FROM {target['class_name']} ({obj_size:.0f}px) ←"
 
                     # 2. Calculate final motor speeds
@@ -1100,6 +1108,9 @@ class FollowModeController:
                     self.confidence = 0
                     self.target_w = 0
                     self.target_h = 0
+                    self.pid_horizontal.reset()
+                    self.pid_distance.reset()
+                    self.last_time = None
 
                 time.sleep(0.05)
 
