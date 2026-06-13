@@ -527,7 +527,7 @@ class AutoModeController:
 
                 frame_yuv = self.camera.capture_frame()
                 if frame_yuv is None:
-                    time.sleep(0.1)
+                    time.sleep(0.005)
                     continue
 
                 _store_latest_debug_frame(self.debug_frame_lock, self, frame_yuv)
@@ -1001,7 +1001,7 @@ class FollowModeController:
 
                 frame_yuv = self.camera.capture_frame()
                 if frame_yuv is None:
-                    time.sleep(0.05)
+                    time.sleep(0.005)
                     continue
 
                 _store_latest_debug_frame(self.debug_frame_lock, self, frame_yuv)
