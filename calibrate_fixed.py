@@ -128,7 +128,7 @@ def calibrate_lane_width_fixed(frame, show_result=False):
     # Tính lane width
     lane_width_pixels = right_x - left_x
     
-    # Kiểm tra tính hợp lý (38cm không thể > 400px tại 640x480)
+    # Kiểm tra tính hợp lý (25cm không thể > 400px tại 640x480)
     if lane_width_pixels > 400 or lane_width_pixels < 100:
         print(f"⚠️  Kết quả không hợp lý: {lane_width_pixels}px")
         print(f"   Left X: {left_x}, Right X: {right_x}")

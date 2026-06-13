@@ -49,28 +49,20 @@ def main():
     
     print(f"✅ Đã load ảnh: {args.image} ({frame.shape[1]}×{frame.shape[0]})")
     
-    # Resize to 640x480 if needed
-    if frame.shape[:2] != (480, 640):
-        print(f"Resize từ {frame.shape[1]}×{frame.shape[0]} → 640×480")
-        frame = cv2.resize(frame, (640, 480))
-    
-    # Convert to YUV420 format (giống camera output)
-    frame_yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV_I420)
-    
     # Calibration mode
     if args.calibrate:
         print("\n" + "=" * 60)
         print("CALIBRATION MODE")
         print("=" * 60)
-        print("Đo lane width (38cm thật → pixels)...")
+        print("Đo lane width (25cm thật → pixels)...")
         
-        lane_width = calibrate_lane_width(frame_yuv, show_result=True)
+        lane_width = calibrate_lane_width(frame, show_result=True)
         
         if lane_width:
             print(f"\n✅ CALIBRATION RESULT:")
             print(f"  Lane width: {lane_width} pixels")
-            print(f"\n💡 Cập nhật vào perception/lane_detector.py:")
-            print(f"  LANE_WIDTH_PIXELS = {lane_width}")
+            print(f"\n💡 Cập nhật vào config/hardware_config.yaml:")
+            print(f"  ai.lane_detection.lane_width_pixels: {lane_width}")
         
         return
     
@@ -80,7 +72,7 @@ def main():
     print("=" * 60)
     
     try:
-        error, x_line, center_x, debug_frame = detect_line(frame_yuv, lane_config)
+        error, x_line, center_x, debug_frame = detect_line(frame, lane_config, debug=True)
         
         print(f"\n📊 Kết quả:")
         print(f"  Error:      {error:+4d} px")

@@ -8,7 +8,7 @@
 - ⚠️ **VẤN ĐỀ CHÍNH**: Code detect vạch **TRẮNG/VÀNG** nhưng thực tế là vạch **ĐEN**
 
 ### Thông số thực tế:
-- **Lane width**: 38cm (khoảng cách 2 vạch kẻ)
+- **Lane width**: 25cm (khoảng cách 2 vạch kẻ)
 - **Robot width**: 15cm
 - **Line color**: ĐEN (trên nền sáng - nhà/trắng)
 - **Camera**: Picamera2 với RGB888
@@ -43,7 +43,7 @@ enhanced = clahe.apply(blur)
 
 ```python
 # Hàm calibrate_lane_width() trong file mới
-# Đo 38cm thực tế = ? pixels trên ảnh
+# Đo 25cm thực tế = ? pixels trên ảnh
 LANE_WIDTH_PIXELS = 250  # Ví dụ, cần đo lại
 ```
 
@@ -114,7 +114,7 @@ python3 test_lane_optimized.py
 **Kết quả mong đợi**:
 ```
 CALIBRATION RESULT:
-  Lane Width (Real):  38 cm
+  Lane Width (Real):  25 cm
   Lane Width (Pixel): 245 px  # Số này sẽ khác nhau
   Scale Factor:       0.1551 cm/px
 ```

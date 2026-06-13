@@ -27,7 +27,7 @@ safety:
 # ============================================================================
 sensors:
   camera:
-    resolution: [640, 480]    # Độ phân giải tối ưu cho lane detection
+    resolution: [960, 720]    # Output xử lý trung gian: rộng hơn 640x480 nhưng nhẹ hơn 1640x1232
                               # ISP resize phần cứng, KHÔNG dùng CPU!
     framerate: 30             # Số frame/giây
     
@@ -35,6 +35,8 @@ sensors:
       format: 'YUV420'        # YUV420: Y channel = Grayscale miễn phí
                               # Tiết kiệm băng thông và CPU so với RGB888
       buffer_count: 6         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
+      sensor_output_size: [1640, 1232]  # Full FOV sensor mode, ISP scale xuống resolution ở trên
+      sensor_bit_depth: 10
       
       # Camera controls - Điều chỉnh chất lượng ảnh
       controls:
@@ -49,22 +51,22 @@ ai:
   lane_detection:
     # ROI (Region of Interest) - Vùng quan tâm trong ảnh
     roi_top_ratio: 0.6       # Bắt đầu ROI từ 35% từ trên (0.0 = đỉnh, 1.0 = đáy)
-    roi_bottom_ratio: 1.0     # Kết thúc ROI tại đáy ảnh
-    roi_left_ratio: 0.1      # Biên trái ROI (30% từ trái)
-    roi_right_ratio: 0.9     # Biên phải ROI (70% từ trái)
+    roi_bottom_ratio: 1     # Kết thúc ROI tại đáy ảnh
+    roi_left_ratio: 0.25      # Biên trái ROI (30% từ trái)
+    roi_right_ratio: 0.75     # Biên phải ROI (70% từ trái)
     
     # Canny Edge Detection - Phát hiện cạnh
     canny_low: 80             # Ngưỡng thấp (giảm = nhạy hơn, nhiều edge hơn)
-    canny_high: 185           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
+    canny_high: 170           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
     
     # Hough Transform - Phát hiện đường thẳng
-    hough_threshold: 40       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
-    min_line_length: 50       # Độ dài tối thiểu của đường thẳng (pixel)
-    max_line_gap: 25         # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
-    lane_width_pixels: 457    # Độ rộng lane đã calibrate theo frame camera thực tế
+    hough_threshold: 85       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
+    min_line_length: 80       # Độ dài tối thiểu của đường thẳng (pixel)
+    max_line_gap: 20         # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
+    lane_width_pixels: 855    # Độ rộng lane 25cm đã calibrate theo frame camera thực tế
     
     # Preprocessing - Tiền xử lý ảnh
-    blur_kernel: 7            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)
+    blur_kernel: 9            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)
 
 # ============================================================================
 # LANE FOLLOWING - Cấu hình chế độ Auto (theo vạch)
@@ -110,9 +112,4 @@ follow_mode:
     ki: 0.0                   # Integral
     kd: 0.4                   # Derivative
 
-# ============================================================================
-# VISUAL ODOMETRY - Đo quãng đường bằng camera
-# ============================================================================
-visual_odometry:
-  scale_factor: 1.2041          # Hệ số chuyển đổi pixel → cm (1 pixel = 0.05 cm)
-                              # ⚠️ Cần calibrate cho camera và độ cao cụ thể
+

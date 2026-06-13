@@ -12,6 +12,26 @@ import time
 logger = logging.getLogger(__name__)
 
 
+def _parse_size(value, default=None, name="size"):
+    """Parse a [width, height] style config value."""
+    if value is None:
+        return default
+
+    try:
+        width, height = value
+        width = int(width)
+        height = int(height)
+    except (TypeError, ValueError):
+        logger.warning("Invalid camera %s=%r; using %r", name, value, default)
+        return default
+
+    if width <= 0 or height <= 0:
+        logger.warning("Invalid camera %s=%r; using %r", name, value, default)
+        return default
+
+    return (width, height)
+
+
 def yuv420_to_bgr(frame_yuv: np.ndarray) -> np.ndarray:
     """
     Convert Picamera2 YUV420 planar frames to BGR.
@@ -22,6 +42,22 @@ def yuv420_to_bgr(frame_yuv: np.ndarray) -> np.ndarray:
     import cv2
 
     return cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
+
+
+def crop_yuv420_frame(frame_yuv: np.ndarray, resolution: tuple) -> np.ndarray:
+    """Crop Picamera2 YUV420 stride padding to the configured image size."""
+    if frame_yuv is None or len(frame_yuv.shape) != 2:
+        return frame_yuv
+
+    width, height = resolution
+    expected_shape = ((height * 3) // 2, width)
+    if frame_yuv.shape[0] < expected_shape[0] or frame_yuv.shape[1] < expected_shape[1]:
+        return frame_yuv
+
+    if frame_yuv.shape == expected_shape and frame_yuv.flags["C_CONTIGUOUS"]:
+        return frame_yuv
+
+    return np.ascontiguousarray(frame_yuv[: expected_shape[0], : expected_shape[1]])
 
 
 class CameraManager:
@@ -50,10 +86,12 @@ class CameraManager:
         
         # ============================================================
         # OPTIMIZED: Sử dụng ISP để resize và chuyển format
-        # - Xuất thẳng 640x480 từ phần cứng (không dùng CPU resize)
+        # - Xuất resolution từ config bằng ISP hardware (không dùng CPU resize)
         # - Dùng YUV420 để có sẵn Y channel (Grayscale) miễn phí
         # ============================================================
-        self.resolution = tuple(camera_config.get("resolution", [640, 480]))
+        self.resolution = _parse_size(
+            camera_config.get("resolution"), (960, 720), "resolution"
+        )
         self.framerate = camera_config.get("framerate", 30)
 
         # Picamera2 specific settings
@@ -61,6 +99,22 @@ class CameraManager:
         # YUV420: Y channel = Grayscale, tiết kiệm băng thông và CPU
         self.format = picam_config.get("format", "YUV420")
         self.buffer_count = picam_config.get("buffer_count", 4)
+        self.sensor_output_size = _parse_size(
+            picam_config.get(
+                "sensor_output_size", camera_config.get("sensor_output_size")
+            ),
+            None,
+            "sensor_output_size",
+        )
+        self.sensor_bit_depth = int(
+            picam_config.get("sensor_bit_depth", camera_config.get("sensor_bit_depth", 10))
+        )
+        self.sensor_config = {}
+        if self.sensor_output_size:
+            self.sensor_config = {
+                "output_size": self.sensor_output_size,
+                "bit_depth": self.sensor_bit_depth,
+            }
 
         # ============================================================
         # ✅ FIX RACE CONDITION: Double buffering cho web streaming
@@ -94,10 +148,14 @@ class CameraManager:
                 self.camera = Picamera2()
 
                 # Create video configuration
-                video_config = self.camera.create_video_configuration(
-                    main={"size": self.resolution, "format": self.format},
-                    buffer_count=self.buffer_count,
-                )
+                config_kwargs = {
+                    "main": {"size": self.resolution, "format": self.format},
+                    "buffer_count": self.buffer_count,
+                }
+                if self.sensor_config:
+                    config_kwargs["sensor"] = self.sensor_config
+
+                video_config = self.camera.create_video_configuration(**config_kwargs)
 
                 # Configure camera
                 self.camera.configure(video_config)
@@ -136,6 +194,7 @@ class CameraManager:
                     test_frame = self.camera.capture_array()
                 if test_frame is None:
                     raise Exception("Test capture failed")
+                test_frame = self._normalize_captured_frame(test_frame)
                 self._store_latest_frame(test_frame)
 
                 self.running = True
@@ -145,6 +204,8 @@ class CameraManager:
                     f"✓ Picamera2 started: {self.resolution[0]}x{self.resolution[1]} @ {self.framerate}fps"
                 )
                 logger.info(f"  Format: {self.format}, Buffers: {self.buffer_count}")
+                if self.sensor_config:
+                    logger.info(f"  Sensor: {self.sensor_config}")
 
                 return True
 
@@ -182,6 +243,11 @@ class CameraManager:
             self.frame_count = 0
             self.last_fps_time = current_time
 
+    def _normalize_captured_frame(self, frame: np.ndarray) -> np.ndarray:
+        if str(self.format).upper() == "YUV420":
+            return crop_yuv420_frame(frame, self.resolution)
+        return frame
+
     def _capture_raw_frame(self) -> np.ndarray:
         """Capture one raw frame from Picamera2 with camera access serialized."""
         if not self.running or self.camera is None:
@@ -198,6 +264,7 @@ class CameraManager:
             logger.error("Camera capture returned None")
             return None
 
+        frame = self._normalize_captured_frame(frame)
         self._store_latest_frame(frame)
         self._update_fps()
         return frame

@@ -390,6 +390,43 @@ class DashboardValidationTests(unittest.TestCase):
         bad_json = self.client.post("/update_param", data="not json")
         self.assertEqual(bad_json.status_code, 400)
 
+    def test_dashboard_uses_only_rendered_slider_names(self):
+        response = self.client.get("/")
+        html = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("const tunableParamNames", html)
+        self.assertNotIn("Object.keys(defaultParams)", html)
+
+    def test_save_params_updates_hardware_config_lane_section(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "hardware_config.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "ai:",
+                        "  lane_detection:",
+                        "    canny_low: 80",
+                        "    blur_kernel: 7",
+                        "other:",
+                        "  unchanged: true",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            dashboard_server.lane_params.update({
+                "canny_low": 123,
+                "blur_kernel": 9,
+            })
+            dashboard_server.save_tunable_lane_params_to_config(config_path)
+
+            saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["ai"]["lane_detection"]["canny_low"], 123)
+            self.assertEqual(saved["ai"]["lane_detection"]["blur_kernel"], 9)
+            self.assertTrue(saved["other"]["unchanged"])
+
 
 class TuneLaneWebTests(unittest.TestCase):
     def setUp(self):

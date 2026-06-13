@@ -15,6 +15,7 @@ from pathlib import Path
 # Import lane detector
 try:
     from perception.lane_detector import detect_line
+    from perception.camera_manager import crop_yuv420_frame
     from utils.config_loader import load_config
     from picamera2 import Picamera2
     CAMERA_AVAILABLE = True
@@ -23,6 +24,8 @@ except ImportError as e:
     CAMERA_AVAILABLE = False
 
 app = Flask(__name__)
+
+CONFIG_PATH = Path(__file__).resolve().parent / "config" / "hardware_config.yaml"
 
 # Global variables
 current_frame = None
@@ -47,19 +50,88 @@ DEFAULT_LANE_PARAMS = {
 }
 
 
+def parse_size(value, default=None, name="size"):
+    """Parse a [width, height] config value."""
+    if value is None:
+        return default
+
+    try:
+        width, height = value
+        width = int(width)
+        height = int(height)
+    except (TypeError, ValueError):
+        print(f"⚠️  {name} không hợp lệ: {value!r}, dùng {default!r}")
+        return default
+
+    if width <= 0 or height <= 0:
+        print(f"⚠️  {name} không hợp lệ: {value!r}, dùng {default!r}")
+        return default
+
+    return (width, height)
+
+
+def load_hardware_config():
+    """Load the shared robot hardware config once for dashboard startup."""
+    try:
+        return load_config(str(CONFIG_PATH))
+    except Exception as e:
+        print(f"⚠️  Không load được hardware_config.yaml, dùng mặc định dashboard: {e}")
+        return {}
+
+
+hardware_config = load_hardware_config()
+
+
 def load_default_lane_params():
     """Load lane defaults from the main robot config, with safe fallbacks."""
     params = DEFAULT_LANE_PARAMS.copy()
-    try:
-        config_path = Path(__file__).resolve().parent / "config" / "hardware_config.yaml"
-        config = load_config(str(config_path))
-        params.update(config.get('ai', {}).get('lane_detection', {}))
-    except Exception as e:
-        print(f"⚠️  Không load được hardware_config.yaml, dùng mặc định dashboard: {e}")
+    params.update(hardware_config.get('ai', {}).get('lane_detection', {}))
     return params
 
 
-lane_params = load_default_lane_params()
+def load_camera_settings():
+    """Load Picamera2 settings from hardware_config.yaml."""
+    camera_config = hardware_config.get('sensors', {}).get('camera', {})
+    picam_config = camera_config.get('picamera2', {})
+
+    resolution = parse_size(
+        camera_config.get('resolution'), (960, 720), 'camera resolution'
+    )
+    sensor_output_size = parse_size(
+        picam_config.get('sensor_output_size', camera_config.get('sensor_output_size')),
+        None,
+        'camera sensor_output_size',
+    )
+
+    try:
+        buffer_count = int(picam_config.get('buffer_count', 4))
+    except (TypeError, ValueError):
+        buffer_count = 4
+
+    sensor_config = {}
+    if sensor_output_size:
+        try:
+            sensor_bit_depth = int(
+                picam_config.get(
+                    'sensor_bit_depth',
+                    camera_config.get('sensor_bit_depth', 10),
+                )
+            )
+        except (TypeError, ValueError):
+            sensor_bit_depth = 10
+
+        sensor_config = {
+            'output_size': sensor_output_size,
+            'bit_depth': sensor_bit_depth,
+        }
+
+    return {
+        'resolution': resolution,
+        'format': picam_config.get('format', 'YUV420'),
+        'buffer_count': max(1, buffer_count),
+        'sensor': sensor_config,
+    }
+
 
 # Parameter ranges for UI sliders
 PARAM_RANGES = {
@@ -74,6 +146,9 @@ PARAM_RANGES = {
     'max_line_gap': {'min': 5, 'max': 80, 'step': 5},
     'blur_kernel': {'min': 1, 'max': 15, 'step': 2},
 }
+TUNABLE_PARAM_NAMES = list(PARAM_RANGES.keys())
+
+lane_params = load_default_lane_params()
 
 
 def validate_lane_param(name, value):
@@ -109,6 +184,90 @@ def validate_lane_param(name, value):
         return int_value
 
     return max(param_range['min'], min(param_range['max'], int_value))
+
+
+def format_yaml_scalar(value):
+    """Format dashboard numeric values for YAML."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def save_tunable_lane_params_to_config(config_path=None):
+    """Persist current slider values into ai.lane_detection while preserving comments."""
+    path = Path(config_path or CONFIG_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path}")
+
+    values = {
+        name: lane_params[name]
+        for name in TUNABLE_PARAM_NAMES
+        if name in lane_params
+    }
+    lines = path.read_text(encoding='utf-8').splitlines()
+
+    ai_start = None
+    for index, line in enumerate(lines):
+        if line.strip().startswith('#') or not line.strip():
+            continue
+        if line.startswith('ai:'):
+            ai_start = index
+            break
+
+    if ai_start is None:
+        lines.extend(['', 'ai:', '  lane_detection:'])
+        ai_start = len(lines) - 2
+
+    ai_end = len(lines)
+    for index in range(ai_start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith(' ') and not line.strip().startswith('#'):
+            ai_end = index
+            break
+
+    lane_start = None
+    for index in range(ai_start + 1, ai_end):
+        stripped = lines[index].strip()
+        if lines[index].startswith('  ') and not lines[index].startswith('    ') and stripped.startswith('lane_detection:'):
+            lane_start = index
+            break
+
+    if lane_start is None:
+        lines.insert(ai_end, '  lane_detection:')
+        lane_start = ai_end
+        ai_end += 1
+
+    lane_end = ai_end
+    for index in range(lane_start + 1, ai_end):
+        line = lines[index]
+        if line.strip() and not line.startswith('    ') and not line.strip().startswith('#'):
+            lane_end = index
+            break
+
+    updated = set()
+    for index in range(lane_start + 1, lane_end):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or ':' not in stripped:
+            continue
+
+        key = stripped.split(':', 1)[0].strip()
+        if key not in values:
+            continue
+
+        before_comment, separator, comment = line.partition('#')
+        prefix = before_comment.split(':', 1)[0] + ': '
+        comment_padding = before_comment[len(before_comment.rstrip()):]
+        suffix = f"{comment_padding}#{comment}" if separator else ''
+        lines[index] = prefix + format_yaml_scalar(values[key]) + suffix
+        updated.add(key)
+
+    missing = [name for name in TUNABLE_PARAM_NAMES if name in values and name not in updated]
+    insert_lines = [f"    {name}: {format_yaml_scalar(values[name])}" for name in missing]
+    if insert_lines:
+        lines[lane_end:lane_end] = insert_lines
+
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 # HTML Template with embedded CSS/JS
 HTML_TEMPLATE = """
@@ -461,13 +620,18 @@ HTML_TEMPLATE = """
     <script>
         // Default parameters
         const defaultParams = {{ lane_params | tojson }};
+        const tunableParamNames = {{ tunable_param_names | tojson }};
         
         // Initialize sliders
-        const paramNames = Object.keys(defaultParams);
+        const paramNames = tunableParamNames;
         
         paramNames.forEach(name => {
             const slider = document.getElementById(name);
             const valueDisplay = document.getElementById('val-' + name);
+            if (!slider || !valueDisplay) {
+                console.warn('Missing slider element for parameter:', name);
+                return;
+            }
             
             slider.addEventListener('input', () => {
                 const val = parseFloat(slider.value);
@@ -479,13 +643,25 @@ HTML_TEMPLATE = """
         // Update parameter on server
         async function updateParam(name, value) {
             try {
-                await fetch('/update_param', {
+                const response = await fetch('/update_param', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name, value })
                 });
+                const data = await response.json();
+                if (!response.ok || data.status !== 'ok') {
+                    throw new Error(data.message || 'Update failed');
+                }
+
+                const slider = document.getElementById(name);
+                const valueDisplay = document.getElementById('val-' + name);
+                if (slider && valueDisplay) {
+                    slider.value = data.value;
+                    valueDisplay.textContent = data.value;
+                }
             } catch (e) {
                 console.error('Error updating param:', e);
+                showToast('Không cập nhật được ' + name + ': ' + e.message, true);
             }
         }
         
@@ -580,6 +756,7 @@ HTML_TEMPLATE = """
                     if (params[name] !== undefined) {
                         const slider = document.getElementById(name);
                         const valueDisplay = document.getElementById('val-' + name);
+                        if (!slider || !valueDisplay) return;
                         slider.value = params[name];
                         valueDisplay.textContent = params[name];
                     }
@@ -678,25 +855,38 @@ def camera_thread():
     
     try:
         picam2 = Picamera2()
+        camera_settings = load_camera_settings()
         
         # ============================================================
-        # ✅ FIX: Dùng YUV420 format consistent với camera_manager.py
+        # ✅ FIX: Dùng cấu hình camera chung với camera_manager.py
         # ============================================================
-        # Thay vì RGB888, dùng YUV420 như main system
-        # Benefit: Consistent format convention, tiết kiệm băng thông
+        # Output trung gian 960x720, sensor full FOV để không crop mất line.
         # ============================================================
-        config = picam2.create_preview_configuration(
-            main={"size": (640, 480), "format": "YUV420"}  # ← Changed from RGB888
-        )
+        config_kwargs = {
+            "main": {
+                "size": camera_settings["resolution"],
+                "format": camera_settings["format"],
+            },
+            "buffer_count": camera_settings["buffer_count"],
+        }
+        if camera_settings["sensor"]:
+            config_kwargs["sensor"] = camera_settings["sensor"]
+
+        config = picam2.create_preview_configuration(**config_kwargs)
         picam2.configure(config)
         picam2.start()
         
-        print("✅ Camera started (YUV420 format)")
+        width, height = camera_settings["resolution"]
+        print(f"✅ Camera started ({width}x{height}, {camera_settings['format']})")
+        if camera_settings["sensor"]:
+            print(f"   Sensor: {camera_settings['sensor']}")
         time.sleep(2)  # Warm-up
         
         while True:
             # Capture frame (YUV420 planar format)
             frame_yuv = picam2.capture_array()
+            if str(camera_settings["format"]).upper() == "YUV420":
+                frame_yuv = crop_yuv420_frame(frame_yuv, camera_settings["resolution"])
 
             # Detect lane on raw YUV420 so the detector can use the Y channel directly.
             # debug=True asks for a BGR frame only for browser visualization.
@@ -740,7 +930,11 @@ def generate_frames():
 @app.route('/')
 def index():
     """Main dashboard page"""
-    return render_template_string(HTML_TEMPLATE, lane_params=lane_params)
+    return render_template_string(
+        HTML_TEMPLATE,
+        lane_params=lane_params,
+        tunable_param_names=TUNABLE_PARAM_NAMES,
+    )
 
 
 @app.route('/video_feed')
@@ -793,11 +987,12 @@ def update_param():
 def save_params():
     """Save current parameters to config file"""
     try:
-        import json
-        with open('lane_params_saved.json', 'w') as f:
-            json.dump(lane_params, f, indent=2)
-        print(f"💾 Parameters saved to lane_params_saved.json")
-        return jsonify({'status': 'ok', 'message': 'Saved to lane_params_saved.json'})
+        save_tunable_lane_params_to_config()
+        print(f"💾 Parameters saved to {CONFIG_PATH}")
+        return jsonify({
+            'status': 'ok',
+            'message': 'Saved to config/hardware_config.yaml',
+        })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 

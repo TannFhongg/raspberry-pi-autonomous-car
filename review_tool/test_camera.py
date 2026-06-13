@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cv2
-from perception.camera_manager import CameraManager
+from perception.camera_manager import CameraManager, yuv420_to_bgr
 from utils.config_loader import load_config
 
 
@@ -60,7 +60,7 @@ def main():
         if frame is not None:
             # Convert YUV420 to BGR if needed
             if len(frame.shape) == 2:  # YUV420 planar
-                frame_bgr = cv2.cvtColor(frame[:480, :], cv2.COLOR_YUV420p2BGR)
+                frame_bgr = yuv420_to_bgr(frame)
             else:
                 frame_bgr = frame
             

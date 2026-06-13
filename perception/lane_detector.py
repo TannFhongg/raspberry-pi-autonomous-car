@@ -1,7 +1,7 @@
 """
 Lane Detection Module - resolution-aware frame processing
 OPTIMIZED for BLACK LINES on WHITE BACKGROUND
-Designed for: 38cm lane width, 15cm robot width, black tape lines
+Designed for: 25cm lane width, 15cm robot width, black tape lines
 Camera: Raspberry Pi Camera Module 2
 """
 
@@ -228,7 +228,7 @@ def detect_line(frame, config=None, debug=False):
     ✅ OPTIMIZED: Nhận RAW YUV420 từ camera_manager, lấy trực tiếp kênh Y (grayscale)
 
     Thông số thực tế:
-    - Lane width: 38cm
+    - Lane width: 25cm
     - Robot width: 15cm
     - Input: RAW YUV420 từ camera_manager (ISP hardware output)
     - Line color: BLACK on WHITE background
@@ -493,7 +493,7 @@ def detect_line_black_adaptive(frame, debug=False, config=None):
 
 def calibrate_lane_width(frame, show_result=False):
     """
-    Calibration tool - Đo 38cm lane thành pixels
+    Calibration tool - Đo 25cm lane thành pixels
     ✅ OPTIMIZED: Nhận RAW YUV420, lấy trực tiếp kênh Y
     Đã sửa: KHÔNG dùng cv2.imshow() (không có màn hình)
     """
@@ -526,9 +526,9 @@ def calibrate_lane_width(frame, show_result=False):
 
             print(f"\n{'='*60}")
             print(f"✅ CALIBRATION THÀNH CÔNG:")
-            print(f"  Lane Width (Real):  38 cm")
+            print(f"  Lane Width (Real):  25 cm")
             print(f"  Lane Width (Pixel): {lane_width_pixels} px")
-            print(f"  Scale Factor:       {38 / lane_width_pixels:.4f} cm/px")
+            print(f"  Scale Factor:       {25 / lane_width_pixels:.4f} cm/px")
             print(f"{'='*60}\n")
             print(f"⚠️  CẬP NHẬT NGAY:")
             print(f"  config/hardware_config.yaml:")

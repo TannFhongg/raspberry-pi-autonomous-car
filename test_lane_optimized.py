@@ -31,7 +31,7 @@ except ImportError as e:
 # ============================================================
 def run_calibration(test_file='test_full_hd.jpg'):
     """
-    Calibration - Đo 38cm = ? pixels
+    Calibration - Đo 25cm = ? pixels
     Quan trọng: PHẢI chạy trước khi test!
     """
     print("\n" + "="*70)
