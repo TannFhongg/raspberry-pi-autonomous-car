@@ -52,18 +52,19 @@ ai:
     # ROI (Region of Interest) - Vùng quan tâm trong ảnh
     roi_top_ratio: 0.6       # Bắt đầu ROI từ 35% từ trên (0.0 = đỉnh, 1.0 = đáy)
     roi_bottom_ratio: 1     # Kết thúc ROI tại đáy ảnh
-    roi_left_ratio: 0.25      # Biên trái ROI (30% từ trái)
+    roi_left_ratio: 0.2      # Biên trái ROI (30% từ trái)
     roi_right_ratio: 0.75     # Biên phải ROI (70% từ trái)
     
     # Canny Edge Detection - Phát hiện cạnh
     canny_low: 80             # Ngưỡng thấp (giảm = nhạy hơn, nhiều edge hơn)
-    canny_high: 170           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
+    canny_high: 185           # Ngưỡng cao (tăng = ít edge hơn, rõ ràng hơn)
     
     # Hough Transform - Phát hiện đường thẳng
-    hough_threshold: 85       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
-    min_line_length: 80       # Độ dài tối thiểu của đường thẳng (pixel)
+    hough_threshold: 50       # Số vote tối thiểu để coi là đường thẳng (giảm = nhạy hơn)
+    min_line_length: 50       # Độ dài tối thiểu của đường thẳng (pixel)
     max_line_gap: 20         # Khoảng cách tối đa giữa 2 đoạn để nối thành 1 đường
-    lane_width_pixels: 855    # Độ rộng lane 25cm đã calibrate theo frame camera thực tế
+    lane_width_pixels: 709    # Độ rộng lane 25cm đã calibrate theo frame camera thực tế
+    camera_offset: 18         # Bù sai số khi robot/camera đã căn giữa nhưng error vẫn lệch
     
     # Preprocessing - Tiền xử lý ảnh
     blur_kernel: 9            # Kích thước kernel Gaussian blur (phải là số lẻ: 3, 5, 7)
@@ -111,5 +112,4 @@ follow_mode:
     kp: 0.8                   # Proportional
     ki: 0.0                   # Integral
     kd: 0.4                   # Derivative
-
 

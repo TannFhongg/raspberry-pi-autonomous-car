@@ -47,6 +47,7 @@ DEFAULT_LANE_PARAMS = {
     'min_line_length': 50,
     'max_line_gap': 25,
     'blur_kernel': 7,
+    'camera_offset': -15,
 }
 
 
@@ -145,6 +146,7 @@ PARAM_RANGES = {
     'min_line_length': {'min': 10, 'max': 100, 'step': 5},
     'max_line_gap': {'min': 5, 'max': 80, 'step': 5},
     'blur_kernel': {'min': 1, 'max': 15, 'step': 2},
+    'camera_offset': {'min': -200, 'max': 200, 'step': 1},
 }
 TUNABLE_PARAM_NAMES = list(PARAM_RANGES.keys())
 
@@ -602,6 +604,16 @@ HTML_TEMPLATE = """
                     </label>
                     <input type="range" id="blur_kernel" min="1" max="15" step="2" value="{{ lane_params.blur_kernel }}">
                 </div>
+
+                <div class="section-title">🎯 Calibration Offset</div>
+
+                <div class="param-group">
+                    <label>
+                        <span class="param-name">camera_offset</span>
+                        <span class="param-value" id="val-camera_offset">{{ lane_params.camera_offset }}</span>
+                    </label>
+                    <input type="range" id="camera_offset" min="-200" max="200" step="1" value="{{ lane_params.camera_offset }}">
+                </div>
                 
                 <div class="controls">
                     <button class="btn btn-warning" onclick="resetParams()">🔄 Reset</button>
@@ -796,13 +808,170 @@ def classify_lane_status(error):
     return "CENTERED"
 
 
-def draw_dashboard_overlay(frame, x_line, center_x, error, params):
+def _dashboard_gray_frame(frame):
+    """Extract grayscale for dashboard-only line debugging."""
+    if frame is None or not hasattr(frame, "shape"):
+        return None
+
+    if len(frame.shape) == 2:
+        height, width = frame.shape[:2]
+        if height % 3 == 0 and width % 2 == 0:
+            image_height = (height * 2) // 3
+            return frame[:image_height, :].copy()
+        return frame.copy()
+
+    if len(frame.shape) == 3 and frame.shape[2] == 3:
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    return None
+
+
+def _odd_kernel(value, default=7):
+    try:
+        kernel = int(round(float(value)))
+    except (TypeError, ValueError):
+        kernel = default
+    kernel = max(1, kernel)
+    if kernel % 2 == 0:
+        kernel += 1
+    return kernel
+
+
+def _calculate_lane_x_at_bottom(lines, height, width):
+    x_bottoms = []
+    for x1, y1, x2, y2, slope in lines:
+        x_bottom = x1 + (height - y1) / slope
+        if 0 <= x_bottom <= width:
+            x_bottoms.append(x_bottom)
+
+    if not x_bottoms:
+        return None
+    return int(np.median(x_bottoms))
+
+
+def draw_detected_hough_lines(output, source_frame, params):
+    """Draw dashboard-only raw Hough line segments for lane tuning."""
+    gray = _dashboard_gray_frame(source_frame)
+    if gray is None:
+        return output
+
+    height, width = gray.shape[:2]
+    center_x = width // 2
+
+    gray_inverted = cv2.bitwise_not(gray)
+    blur_kernel = _odd_kernel(params.get('blur_kernel', 7))
+    blur = cv2.GaussianBlur(gray_inverted, (blur_kernel, blur_kernel), 0)
+    clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+    enhanced = clahe.apply(blur)
+    edges = cv2.Canny(
+        enhanced,
+        int(params.get('canny_low', 80)),
+        int(params.get('canny_high', 185)),
+    )
+
+    roi_top = int(height * params.get('roi_top_ratio', 0.6))
+    roi_bottom = int(height * params.get('roi_bottom_ratio', 1.0))
+    roi_left = int(width * params.get('roi_left_ratio', 0.1))
+    roi_right = int(width * params.get('roi_right_ratio', 0.9))
+    roi_vertices = np.array([[
+        (0, roi_bottom),
+        (roi_left, roi_top),
+        (roi_right, roi_top),
+        (width, roi_bottom),
+    ]], dtype=np.int32)
+
+    mask = np.zeros_like(edges)
+    cv2.fillPoly(mask, roi_vertices, 255)
+    masked_edges = cv2.bitwise_and(edges, mask)
+
+    lines = cv2.HoughLinesP(
+        masked_edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=int(params.get('hough_threshold', 40)),
+        minLineLength=int(params.get('min_line_length', 50)),
+        maxLineGap=int(params.get('max_line_gap', 25)),
+    )
+
+    left_lines = []
+    right_lines = []
+    rejected_count = 0
+
+    if lines is not None:
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            if abs(x2 - x1) < 1:
+                rejected_count += 1
+                continue
+
+            slope = (y2 - y1) / (x2 - x1)
+            mid_x = (x1 + x2) / 2
+
+            if slope < -0.5 and mid_x < center_x:
+                left_lines.append((x1, y1, x2, y2, slope))
+                cv2.line(output, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            elif slope > 0.5 and mid_x > center_x:
+                right_lines.append((x1, y1, x2, y2, slope))
+                cv2.line(output, (x1, y1), (x2, y2), (255, 0, 0), 3)
+            else:
+                rejected_count += 1
+                cv2.line(output, (x1, y1), (x2, y2), (80, 80, 80), 1)
+
+    left_x = _calculate_lane_x_at_bottom(left_lines, height, width)
+    right_x = _calculate_lane_x_at_bottom(right_lines, height, width)
+
+    if left_x is not None:
+        cv2.circle(output, (left_x, height - 12), 10, (0, 255, 0), -1)
+        cv2.line(output, (left_x, height - 80), (left_x, height), (0, 255, 0), 2)
+
+    if right_x is not None:
+        cv2.circle(output, (right_x, height - 12), 10, (255, 0, 0), -1)
+        cv2.line(output, (right_x, height - 80), (right_x, height), (255, 0, 0), 2)
+
+    if left_x is not None and right_x is not None:
+        cv2.line(output, (left_x, height - 30), (right_x, height - 30), (0, 255, 255), 3)
+        cv2.putText(
+            output,
+            f"Lane px: {right_x - left_x}",
+            (10, 92),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 255, 255),
+            2,
+        )
+
+    cv2.putText(
+        output,
+        f"Hough L:{len(left_lines)} R:{len(right_lines)} rejected:{rejected_count}",
+        (10, 62),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(
+        output,
+        "Green=left lane | Blue=right lane | Gray=rejected",
+        (10, height - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        1,
+    )
+
+    return output
+
+
+def draw_dashboard_overlay(frame, x_line, center_x, error, params, source_frame=None):
     """Draw ROI, center line, detected target line, and current error."""
     if frame is None:
         return None
 
     output = frame.copy()
     height, width = output.shape[:2]
+
+    line_source = frame if source_frame is None else source_frame
+    output = draw_detected_hough_lines(output, line_source, params)
 
     roi_top = int(height * params.get('roi_top_ratio', 0.6))
     roi_bottom = int(height * params.get('roi_bottom_ratio', 1.0))
@@ -894,7 +1063,7 @@ def camera_thread():
                 frame_yuv, lane_params, debug=True
             )
             debug_frame = draw_dashboard_overlay(
-                debug_frame, x_line, center_x, error, lane_params
+                debug_frame, x_line, center_x, error, lane_params, frame_yuv
             )
             
             # Update global variables

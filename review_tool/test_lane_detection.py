@@ -1,6 +1,6 @@
 """
 Test Lane Detection với ảnh tĩnh
-Chạy: python review_tool/test_lane_detection.py --image test_full_hd.jpg
+Chạy: python review_tool/test_lane_detection.py --image test_full_hd.jpg --calibrate
 """
 
 import argparse
@@ -17,7 +17,7 @@ from utils.config_loader import load_config
 
 def main():
     parser = argparse.ArgumentParser(description="Test lane detection")
-    parser.add_argument("--image", default="test_full_hd.jpg", help="Đường dẫn ảnh test")
+    parser.add_argument("--image", default="test_camera_frame.jpg", help="Đường dẫn ảnh test")
     parser.add_argument("--calibrate", action="store_true", help="Chạy calibration tool")
     parser.add_argument("--config", default="config/hardware_config.yaml", help="File cấu hình")
     args = parser.parse_args()
