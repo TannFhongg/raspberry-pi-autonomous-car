@@ -101,14 +101,26 @@ def test_motor_basic():
         
         # Test 6: Individual motors
         print("[6/6] INDIVIDUAL MOTORS...")
-        print("  Left motor only...")
+        print("  Left motor FORWARD only...")
         driver.set_motors(150, 0)
         time.sleep(2)
         driver.stop()
         time.sleep(0.5)
-        
-        print("  Right motor only...")
+
+        print("  Left motor BACKWARD only...")
+        driver.set_motors(-150, 0)
+        time.sleep(2)
+        driver.stop()
+        time.sleep(0.5)
+
+        print("  Right motor FORWARD only...")
         driver.set_motors(0, 150)
+        time.sleep(2)
+        driver.stop()
+        time.sleep(0.5)
+
+        print("  Right motor BACKWARD only...")
+        driver.set_motors(0, -150)
         time.sleep(2)
         driver.stop()
         

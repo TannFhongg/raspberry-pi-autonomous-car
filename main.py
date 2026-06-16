@@ -30,9 +30,9 @@ from control.robot_controller import (
 from utils.logger import setup_logger
 from utils.config_loader import load_config
 from perception.camera_manager import (
+    frame_to_bgr,
     get_web_camera,
     release_web_camera,
-    yuv420_to_bgr,
 )  # NEW: Picamera2
 
 # Initialize Flask app
@@ -219,9 +219,9 @@ def debug_feed():
                         camera = get_web_camera(config)
                         if camera.is_running():
                             if frame is None and current_mode not in ['auto', 'follow']:
-                                frame_yuv = camera.capture_frame()
-                                if frame_yuv is not None:
-                                    frame_bgr = yuv420_to_bgr(frame_yuv)
+                                frame_raw = camera.capture_frame()
+                                if frame_raw is not None:
+                                    frame_bgr = frame_to_bgr(frame_raw, camera.format)
                                     frame = cv2.resize(frame_bgr, (320, 240))
 
                             if frame is None:

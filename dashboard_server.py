@@ -15,7 +15,7 @@ from pathlib import Path
 # Import lane detector
 try:
     from perception.lane_detector import detect_line
-    from perception.camera_manager import crop_yuv420_frame
+    from perception.camera_manager import crop_yuv420_frame, frame_to_bgr
     from utils.config_loader import load_config
     from picamera2 import Picamera2
     CAMERA_AVAILABLE = True
@@ -1052,23 +1052,22 @@ def camera_thread():
         time.sleep(2)  # Warm-up
         
         while True:
-            # Capture frame (YUV420 planar format)
-            frame_yuv = picam2.capture_array()
+            frame = picam2.capture_array()
             if str(camera_settings["format"]).upper() == "YUV420":
-                frame_yuv = crop_yuv420_frame(frame_yuv, camera_settings["resolution"])
+                lane_frame = crop_yuv420_frame(frame, camera_settings["resolution"])
+            else:
+                lane_frame = frame_to_bgr(frame, camera_settings["format"])
 
-            # Detect lane on raw YUV420 so the detector can use the Y channel directly.
-            # debug=True asks for a BGR frame only for browser visualization.
             error, x_line, center_x, debug_frame = detect_line(
-                frame_yuv, lane_params, debug=True
+                lane_frame, lane_params, debug=True
             )
             debug_frame = draw_dashboard_overlay(
-                debug_frame, x_line, center_x, error, lane_params, frame_yuv
+                debug_frame, x_line, center_x, error, lane_params, lane_frame
             )
             
             # Update global variables
             with frame_lock:
-                current_frame = frame_yuv
+                current_frame = lane_frame
                 current_debug_frame = debug_frame
                 current_error = error
                 lane_status = classify_lane_status(error)

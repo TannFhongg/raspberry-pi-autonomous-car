@@ -19,11 +19,11 @@ arduino:
 # SAFETY - Cấu hình an toàn
 # ============================================================================
 safety:
-  timeout: 8.0  # Thời gian (giây) không nhận lệnh thì tự động dừng robot
+  timeout: 800.0  # Thời gian (giây) không nhận lệnh thì tự động dừng robot
 
 # ============================================================================
 # CAMERA - Cấu hình Picamera2 (Raspberry Pi Camera Module 2)
-# OPTIMIZED: Sử dụng ISP để resize và chuyển format, giảm tải CPU
+# OPTIMIZED: Sử dụng ISP để resize, xuất màu ổn định cho nhận diện
 # ============================================================================
 sensors:
   camera:
@@ -32,8 +32,7 @@ sensors:
     framerate: 30             # Số frame/giây
     
     picamera2:
-      format: 'YUV420'        # YUV420: Y channel = Grayscale miễn phí
-                              # Tiết kiệm băng thông và CPU so với RGB888
+      format: 'RGB888'        # RGB888: ổn định màu cho YOLO/follow, tránh sọc YUV420
       buffer_count: 6         # Số buffer (tăng = mượt hơn, tốn RAM hơn)
       sensor_output_size: [1640, 1232]  # Full FOV sensor mode, ISP scale xuống resolution ở trên
       sensor_bit_depth: 10
@@ -86,30 +85,36 @@ lane_following:
   base_speed: 100              # Tốc độ cơ bản khi đi thẳng (0-255)
   max_speed: 255              # Tốc độ tối đa
   min_speed: 80               # Tốc độ tối thiểu khi vào cua
+  turn_sign_angle: 72          # Góc rẽ theo biển, giảm để tránh vượt lố
+  turn_sign_speed: 170         # Tốc độ rẽ theo biển, giảm để bớt quán tính
 
 # ============================================================================
 # FOLLOW MODE - Cấu hình chế độ theo dõi đối tượng
 # ============================================================================
 follow_mode:
   # Target size control - Điều khiển khoảng cách bằng kích thước object
-  target_size: 350            # Kích thước mục tiêu (pixel) - robot giữ khoảng cách này
-  size_tolerance: 20          # Dung sai ±20px (trong khoảng này = đứng yên)
+  target_size: 206            # Kích thước mục tiêu (pixel) - robot giữ khoảng cách này
+  size_tolerance: 30          # Dung sai ±30px (trong khoảng này = đứng yên)
   
   # Speed settings - Cấu hình tốc độ
-  forward_speed_max: 150      # Tốc độ tiến tối đa (khi object xa)
-  forward_speed_min: 90       # Tốc độ tiến tối thiểu
-  backward_speed: 100         # Tốc độ lùi (khi object quá gần)
-  turn_speed_max: 160         # Tốc độ xoay tối đa
+  forward_speed_max: 170      # Tốc độ tiến tối đa (khi object xa)
+  forward_speed_min: 130      # Tốc độ tiến tối thiểu
+  backward_speed_min: 120     # Tốc độ lùi tối thiểu để motor đủ lực
+  backward_speed: 175         # Tốc độ lùi tối đa (khi object quá gần)
+  backing_straight_margin: 60 # Quá gần hơn SIZE_MAX + margin thì ưu tiên lùi thẳng
+  backing_turn_ratio: 0.4     # Khi chỉ hơi gần, xoay tối đa 40% tốc độ lùi
+  turn_speed_max: 165         # Tốc độ xoay tối đa
+  turn_speed_min: 70          # Tốc độ xoay tối thiểu khi lệch tâm để motor đủ lực
+  horizontal_tolerance: 20    # Sai số tâm ±20px thì không xoay
   
   # PID cho centering (giữ object ở giữa frame)
   pid_horizontal:
-    kp: 0.3                   # Proportional
+    kp: 0.32                  # Proportional
     ki: 0.0                   # Integral (thường = 0)
-    kd: 0.05                  # Derivative
+    kd: 0.08                  # Derivative
   
   # PID cho distance (giữ khoảng cách)
   pid_distance:
-    kp: 0.8                   # Proportional
+    kp: 0.42                  # Proportional
     ki: 0.0                   # Integral
-    kd: 0.4                   # Derivative
-
+    kd: 0.08                  # Derivative

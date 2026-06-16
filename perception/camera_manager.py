@@ -44,6 +44,51 @@ def yuv420_to_bgr(frame_yuv: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(frame_yuv, cv2.COLOR_YUV2BGR_I420)
 
 
+def frame_to_bgr(frame: np.ndarray, format_name: str = None) -> np.ndarray:
+    """Convert a captured Picamera2 frame to OpenCV BGR."""
+    if frame is None:
+        return None
+
+    import cv2
+
+    format_name = str(format_name or "").upper()
+
+    if format_name == "YUV420":
+        return yuv420_to_bgr(frame)
+
+    if len(frame.shape) == 2:
+        if _looks_like_yuv420_frame(frame):
+            return yuv420_to_bgr(frame)
+        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+
+    if len(frame.shape) == 3:
+        channels = frame.shape[2]
+        if channels == 3:
+            # Picamera2/libcamera's RGB888 capture array on this platform is
+            # already in the channel order expected by OpenCV consumers here.
+            # Swapping it again turns yellow objects blue/cyan.
+            if format_name == "RGB888":
+                return frame
+            if format_name.startswith("RGB"):
+                return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return frame
+        if channels == 4:
+            if format_name.startswith("RGB"):
+                return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+    return frame
+
+
+def _looks_like_yuv420_frame(frame: np.ndarray) -> bool:
+    if frame is None or len(frame.shape) != 2:
+        return False
+
+    height, width = frame.shape[:2]
+    image_height = (height * 2) // 3
+    return height % 3 == 0 and image_height > 0 and image_height % 2 == 0 and width % 2 == 0
+
+
 def crop_yuv420_frame(frame_yuv: np.ndarray, resolution: tuple) -> np.ndarray:
     """Crop Picamera2 YUV420 stride padding to the configured image size."""
     if frame_yuv is None or len(frame_yuv.shape) != 2:
@@ -84,19 +129,13 @@ class CameraManager:
         # Get camera settings from config
         camera_config = self.config.get("sensors", {}).get("camera", {})
         
-        # ============================================================
-        # OPTIMIZED: Sử dụng ISP để resize và chuyển format
-        # - Xuất resolution từ config bằng ISP hardware (không dùng CPU resize)
-        # - Dùng YUV420 để có sẵn Y channel (Grayscale) miễn phí
-        # ============================================================
+        # Use the ISP to resize before frames reach Python.
         self.resolution = _parse_size(
             camera_config.get("resolution"), (960, 720), "resolution"
         )
         self.framerate = camera_config.get("framerate", 30)
 
-        # Picamera2 specific settings
         picam_config = camera_config.get("picamera2", {})
-        # YUV420: Y channel = Grayscale, tiết kiệm băng thông và CPU
         self.format = picam_config.get("format", "YUV420")
         self.buffer_count = picam_config.get("buffer_count", 4)
         self.sensor_output_size = _parse_size(
@@ -358,18 +397,7 @@ class CameraManager:
                 logger.warning("No camera frame available for JPEG encoding")
                 return None
 
-            # ============================================================
-            # ✅ OPTIMIZED: Convert YUV420→BGR chỉ cho web stream
-            # ============================================================
-            format_name = str(self.format).upper()
-            if format_name == 'YUV420':
-                frame_bgr = yuv420_to_bgr(frame_yuv)
-            elif len(frame_yuv.shape) == 2:
-                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_GRAY2BGR)
-            elif format_name.startswith('RGB'):
-                frame_bgr = cv2.cvtColor(frame_yuv, cv2.COLOR_RGB2BGR)
-            else:
-                frame_bgr = frame_yuv
+            frame_bgr = frame_to_bgr(frame_yuv, self.format)
 
             # Encode JPEG NGOÀI lock (5-10ms, không block capture_frame)
             ret, buffer = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])

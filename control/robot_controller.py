@@ -18,7 +18,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from control.pid_controller import PIDController
 from perception.lane_detector import detect_line
-from perception.camera_manager import CameraManager, get_web_camera, yuv420_to_bgr
+from perception.camera_manager import CameraManager, frame_to_bgr, get_web_camera
 from perception.object_detector import ObjectDetector
 from perception.imu_sensor_fusion import IMUSensorFusion
 
@@ -27,28 +27,18 @@ import cv2
 logger = logging.getLogger(__name__)
 
 
-def _create_dashboard_frame(frame, size=(320, 240)):
+def _create_dashboard_frame(frame, size=(320, 240), format_name=None):
     """
     Create a clean BGR frame for the web dashboard.
 
-    Picamera2 YUV420 is laid out as Y, U, V (I420). OpenCV's
-    COLOR_YUV420p2BGR maps to YV12 on this platform, which swaps U/V and
-    shifts colors in the dashboard.
+    The capture format can be YUV420, RGB888, BGR888, or grayscale depending
+    on hardware_config.yaml. Convert it once before sending to the dashboard.
     """
     if frame is None:
         return None
 
-    if len(frame.shape) == 2:
-        height, width = frame.shape[:2]
-        image_height = (height * 2) // 3
-
-        if height % 3 == 0 and image_height % 2 == 0 and width % 2 == 0:
-            frame_bgr = yuv420_to_bgr(frame)
-        else:
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-    elif len(frame.shape) == 3 and frame.shape[2] == 3:
-        frame_bgr = frame
-    else:
+    frame_bgr = frame_to_bgr(frame, format_name)
+    if frame_bgr is None or len(frame_bgr.shape) != 3:
         logger.warning(f"Unexpected dashboard frame format: shape={frame.shape}")
         return None
 
@@ -56,7 +46,11 @@ def _create_dashboard_frame(frame, size=(320, 240)):
 
 
 def _store_latest_debug_frame(lock, owner, frame):
-    dashboard_frame = _create_dashboard_frame(frame)
+    camera = getattr(owner, "camera", None)
+    dashboard_frame = _create_dashboard_frame(
+        frame,
+        format_name=getattr(camera, "format", None),
+    )
     if dashboard_frame is None:
         return
 
@@ -429,6 +423,8 @@ class AutoModeController:
         self.default_speed = self.base_speed
         self.max_speed = lane_config.get('max_speed', 255)     # Khớp với hardware_config.yaml
         self.min_speed = lane_config.get('min_speed', 80)      # Khớp với hardware_config.yaml
+        self.turn_sign_angle = float(lane_config.get('turn_sign_angle', 72))
+        self.turn_sign_speed = int(lane_config.get('turn_sign_speed', 170))
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
 
         # Sign detection thresholds
@@ -525,19 +521,15 @@ class AutoModeController:
                 if self.robot.current_mode != 'auto':
                     break
 
-                frame_yuv = self.camera.capture_frame()
-                if frame_yuv is None:
+                frame = self.camera.capture_frame()
+                if frame is None:
                     time.sleep(0.005)
                     continue
 
-                _store_latest_debug_frame(self.debug_frame_lock, self, frame_yuv)
+                _store_latest_debug_frame(self.debug_frame_lock, self, frame)
 
-                # ============================================================
-                # ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần YOLO
-                # ============================================================
-                # Lane detection sẽ dùng trực tiếp frame_yuv (lấy kênh Y)
-                # YOLO detection cần BGR → convert chỉ khi cần
-                frame_bgr = yuv420_to_bgr(frame_yuv)
+                frame_bgr = frame_to_bgr(frame, self.camera.format)
+                lane_frame = frame if str(self.camera.format).upper() == 'YUV420' else frame_bgr
 
                 # Detect traffic signs (logic only, no drawing)
                 detections, _ = self.detector.detect(frame_bgr)
@@ -584,7 +576,7 @@ class AutoModeController:
                             # Reset approach mode trước khi rẽ
                             self.approaching_turn_sign = False
                             self.turn_sign_direction = None
-                            self.robot.smart_turn(80, speed=200)
+                            self.robot.smart_turn(self.turn_sign_angle, speed=self.turn_sign_speed)
                             self.last_time = None # ✅ THÊM DÒNG NÀY (Reset rác thời gian)
                             self.pid.reset()
                             continue
@@ -594,7 +586,7 @@ class AutoModeController:
                             # Reset approach mode trước khi rẽ
                             self.approaching_turn_sign = False
                             self.turn_sign_direction = None
-                            self.robot.smart_turn(-80, speed=200)
+                            self.robot.smart_turn(-self.turn_sign_angle, speed=self.turn_sign_speed)
                             self.last_time = None # ✅ THÊM DÒNG NÀY (Reset rác thời gian)
                             self.pid.reset()
                             continue
@@ -643,7 +635,7 @@ class AutoModeController:
                 # ✅ PERFORMANCE: debug=False để tắt vẽ hình (tăng hiệu suất)
                 # ============================================================
                 raw_error, x_line, center_x, _ = detect_line(
-                    frame_yuv, self.detection_config, debug=False
+                    lane_frame, self.detection_config, debug=False
                 )
 
                 # Lane validity check
@@ -670,7 +662,7 @@ class AutoModeController:
                             self.recovery_start_time = time.time()  # ✅ FIX: Dùng wall clock
                             self.recovery_attempts = 0
 
-                        lane_found = self._perform_lane_recovery(frame_yuv)
+                        lane_found = self._perform_lane_recovery(lane_frame)
 
                         if lane_found:
                             logger.info("✅ Lane found! Resuming normal operation.")
@@ -858,8 +850,13 @@ class FollowModeController:
         # ===== SPEED SETTINGS - Đọc từ config =====
         self.FORWARD_SPEED_MAX = follow_config.get('forward_speed_max', 150)
         self.FORWARD_SPEED_MIN = follow_config.get('forward_speed_min', 80)
+        self.BACKWARD_SPEED_MIN = follow_config.get('backward_speed_min', 80)
         self.BACKWARD_SPEED = follow_config.get('backward_speed', 100)
+        self.BACKING_STRAIGHT_MARGIN = follow_config.get('backing_straight_margin', 60)
+        self.BACKING_TURN_RATIO = follow_config.get('backing_turn_ratio', 0.4)
         self.TURN_SPEED_MAX = follow_config.get('turn_speed_max', 160)
+        self.TURN_SPEED_MIN = follow_config.get('turn_speed_min', 0)
+        self.HORIZONTAL_TOLERANCE = follow_config.get('horizontal_tolerance', 35)
         self.speed_limit = robot_controller.current_speed
         self.last_time = None  # Track real time between PID updates
 
@@ -999,17 +996,14 @@ class FollowModeController:
                 if self.robot.current_mode != 'follow':
                     break
 
-                frame_yuv = self.camera.capture_frame()
-                if frame_yuv is None:
+                frame = self.camera.capture_frame()
+                if frame is None:
                     time.sleep(0.005)
                     continue
 
-                _store_latest_debug_frame(self.debug_frame_lock, self, frame_yuv)
+                _store_latest_debug_frame(self.debug_frame_lock, self, frame)
 
-                # ============================================================
-                # ✅ OPTIMIZED: Convert YUV420→BGR chỉ khi cần YOLO
-                # ============================================================
-                frame_bgr = yuv420_to_bgr(frame_yuv)
+                frame_bgr = frame_to_bgr(frame, self.camera.format)
 
                 # Detect objects (logic only, no drawing)
                 detections, _ = self.detector.detect(frame_bgr)
@@ -1048,9 +1042,16 @@ class FollowModeController:
                     # Error = target is on the LEFT → need to turn LEFT (negative error)
                     # Error = target is on the RIGHT → need to turn RIGHT (positive error)
                     error_horizontal = self.target_x - center_x
-                    turn_correction = self.pid_horizontal.compute(error_horizontal, dt)
-                    turn_limit = min(self.TURN_SPEED_MAX, self.speed_limit)
-                    turn_correction = max(-turn_limit, min(turn_limit, turn_correction))
+                    if abs(error_horizontal) <= self.HORIZONTAL_TOLERANCE:
+                        turn_correction = 0
+                        self.pid_horizontal.reset()
+                    else:
+                        turn_correction = self.pid_horizontal.compute(error_horizontal, dt)
+                        turn_limit = min(self.TURN_SPEED_MAX, self.speed_limit)
+                        turn_correction = max(-turn_limit, min(turn_limit, turn_correction))
+                        turn_min = min(self.TURN_SPEED_MIN, turn_limit)
+                        if turn_min > 0 and abs(turn_correction) < turn_min:
+                            turn_correction = turn_min if error_horizontal > 0 else -turn_min
 
                     # ===== PID 2: DISTANCE (Forward/Backward) =====
                     # Error = object too small (far) → need to go FORWARD (positive error)
@@ -1069,22 +1070,48 @@ class FollowModeController:
                     elif obj_size < self.SIZE_MIN:
                         # Too small (too far) - move FORWARD using PID distance output
                         forward_max = min(self.FORWARD_SPEED_MAX, self.speed_limit)
-                        base_speed = int(max(0, min(forward_max, distance_correction)))
+                        forward_min = min(self.FORWARD_SPEED_MIN, forward_max)
+                        requested_speed = int(max(0, min(forward_max, distance_correction)))
+                        base_speed = max(forward_min, requested_speed) if forward_max > 0 else 0
                         status = f"APPROACHING {target['class_name']} ({obj_size:.0f}px) →"
 
                     else:
                         # Too large (too close) - move BACKWARD using PID distance output
                         backward_max = min(self.BACKWARD_SPEED, self.speed_limit)
-                        base_speed = int(min(0, max(-backward_max, distance_correction)))
+                        backward_min = min(self.BACKWARD_SPEED_MIN, backward_max)
+                        requested_speed = int(min(0, max(-backward_max, distance_correction)))
+                        base_speed = min(-backward_min, requested_speed) if backward_max > 0 else 0
                         status = f"BACKING FROM {target['class_name']} ({obj_size:.0f}px) ←"
 
+                    if base_speed < 0 and obj_size >= self.SIZE_MAX + self.BACKING_STRAIGHT_MARGIN:
+                        turn_correction = 0
+                        status = f"BACKING STRAIGHT FROM {target['class_name']} ({obj_size:.0f}px) ←"
+
+                    # Keep steering from overpowering distance correction.
+                    # When moving forward/backward, both wheels should keep the same direction.
+                    if base_speed != 0:
+                        if base_speed < 0:
+                            motion_turn_limit = max(0, int(abs(base_speed) * self.BACKING_TURN_RATIO))
+                        else:
+                            motion_turn_limit = max(0, abs(base_speed) - 10)
+                        turn_correction = max(
+                            -motion_turn_limit,
+                            min(motion_turn_limit, turn_correction)
+                        )
+
                     # 2. Calculate final motor speeds
-                    # Left motor: base_speed - turn_correction
-                    # Right motor: base_speed + turn_correction
+                    # Left motor: base_speed + turn_correction
+                    # Right motor: base_speed - turn_correction
                     # (turn_correction < 0 → turn left, > 0 → turn right)
 
                     left_speed = int(base_speed + turn_correction)
                     right_speed = int(base_speed - turn_correction)
+
+                    if base_speed < 0:
+                        reverse_min = min(self.BACKWARD_SPEED_MIN, abs(base_speed), self.speed_limit)
+                        if reverse_min > 0:
+                            left_speed = min(left_speed, -reverse_min)
+                            right_speed = min(right_speed, -reverse_min)
 
                     # Clamp to valid range
                     left_speed = max(-255, min(255, left_speed))
@@ -1098,8 +1125,8 @@ class FollowModeController:
                         time.sleep(0.1)
                         continue
 
-                    # Update status
-                    self.robot.current_state = status
+                    # Update status with commanded speeds for hardware diagnostics
+                    self.robot.current_state = f"{status} | L:{left_speed} R:{right_speed}"
 
                 else:
                     # No target found - STOP and SEARCH

@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cv2
-from perception.camera_manager import CameraManager, yuv420_to_bgr
+from perception.camera_manager import CameraManager, frame_to_bgr
 from utils.config_loader import load_config
 
 
@@ -58,11 +58,7 @@ def main():
         
         # Lưu frame cuối
         if frame is not None:
-            # Convert YUV420 to BGR if needed
-            if len(frame.shape) == 2:  # YUV420 planar
-                frame_bgr = yuv420_to_bgr(frame)
-            else:
-                frame_bgr = frame
+            frame_bgr = frame_to_bgr(frame, camera.format)
             
             output_path = "review_tool/test_camera_frame.jpg"
             cv2.imwrite(output_path, frame_bgr)
