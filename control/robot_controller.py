@@ -427,9 +427,22 @@ class AutoModeController:
         self.turn_sign_speed = int(lane_config.get('turn_sign_speed', 170))
         self.detection_config = robot_controller.config.get('ai', {}).get('lane_detection', {})
 
-        # Sign detection thresholds
-        self.DIST_PREPARE = 150
-        self.DIST_EXECUTE = 250
+        # Sign detection thresholds - đọc từ hardware_config.yaml để dễ calibrate
+        sign_config = lane_config.get('sign_detection', {}) or {}
+        self.DIST_PREPARE = int(
+            sign_config.get('dist_prepare', lane_config.get('dist_prepare', 150))
+        )
+        self.DIST_EXECUTE = int(
+            sign_config.get('dist_execute', lane_config.get('dist_execute', 250))
+        )
+        if self.DIST_EXECUTE <= self.DIST_PREPARE:
+            logger.warning(
+                "Invalid sign detection thresholds: dist_execute=%s <= dist_prepare=%s. "
+                "Using dist_execute=dist_prepare+1.",
+                self.DIST_EXECUTE,
+                self.DIST_PREPARE,
+            )
+            self.DIST_EXECUTE = self.DIST_PREPARE + 1
 
         # Lane detection thresholds
         self.MAX_ERROR_THRESHOLD = 110  # Sai số tối đa để coi là còn lane

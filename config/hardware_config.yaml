@@ -87,6 +87,11 @@ lane_following:
   min_speed: 80               # Tốc độ tối thiểu khi vào cua
   turn_sign_angle: 72          # Góc rẽ theo biển, giảm để tránh vượt lố
   turn_sign_speed: 170         # Tốc độ rẽ theo biển, giảm để bớt quán tính
+  
+  # Sign detection thresholds - đo bằng test_mode_auto.py, metric max(width, height)
+  sign_detection:
+    dist_prepare: 150          # Pixel bắt đầu chuẩn bị xử lý biển
+    dist_execute: 250          # Pixel bắt đầu thực thi biển
 
 # ============================================================================
 # FOLLOW MODE - Cấu hình chế độ theo dõi đối tượng
