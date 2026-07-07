@@ -17,7 +17,6 @@ This repository is a good embedded/robotics portfolio project because it combine
 
 ## Demo
 
-Add your own media under `docs/assets/` using these filenames:
 
 | Placeholder | Suggested content |
 | --- | --- |
@@ -28,9 +27,6 @@ Add your own media under `docs/assets/` using these filenames:
 
 For the best recruiter-facing presentation, capture:
 
-- one short GIF of the robot tracking a lane
-- one screenshot of the Flask dashboard
-- one clean hardware photo with labels
 
 ## Key Features
 
