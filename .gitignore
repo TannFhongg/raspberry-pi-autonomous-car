@@ -12,6 +12,11 @@ dataset/
 data/
 models/
 *.md
+!README.md
+!CONTRIBUTING.md
+!SECURITY.md
+!docs/**
+!.github/**
 # Logs
 *.log
 # Json 
@@ -20,6 +25,7 @@ models/
 *.jpg
 # png
 *.png
+!docs/assets/**
 # Build files
 build/
 dist/
